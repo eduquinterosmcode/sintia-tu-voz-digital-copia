@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import DevTestPanel from "@/components/DevTestPanel";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -138,6 +139,7 @@ export default function Dashboard() {
           ))}
         </div>
       )}
+      <DevTestPanel />
     </div>
   );
 }
