@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import { supabase } from "@/integrations/supabase/client";
 import { createMeeting, transcribeMeeting, analyzeMeeting, chatWithMeeting } from "@/services/apiClient";
 import { useOrganization } from "@/hooks/useOrganization";
-import { Loader2, Bug, ChevronDown, ChevronUp } from "lucide-react";
+import { Loader2, Bug, ChevronDown, ChevronUp, Activity } from "lucide-react";
 
 interface LogEntry {
   time: string;
@@ -14,7 +15,39 @@ interface LogEntry {
   detail: string;
 }
 
-const DEV_ENABLED = import.meta.env.VITE_DEV_TOOLS === "true" || import.meta.env.DEV;
+// Never show in production builds, even if VITE_DEV_TOOLS leaks
+const DEV_ENABLED =
+  import.meta.env.MODE !== "production" &&
+  (import.meta.env.VITE_DEV_TOOLS === "true" || import.meta.env.DEV);
+
+/** Lightweight check: tries a cheap edge call to detect if OPENAI_API_KEY is configured */
+function OpenAIKeyStatus() {
+  const [status, setStatus] = useState<"checking" | "ok" | "missing" | "unknown">("checking");
+
+  useEffect(() => {
+    supabase.functions.invoke("agent-orchestrator", {
+      body: { meeting_id: "00000000-0000-0000-0000-000000000000", mode: "ping" },
+    }).then(({ error }) => {
+      if (!error) { setStatus("ok"); return; }
+      const ctx = (error as any).context;
+      const s = ctx?.status;
+      if (s === 412) setStatus("missing");
+      else if (s === 401 || s === 403) setStatus("unknown");
+      else setStatus("ok");
+    }).catch(() => setStatus("unknown"));
+  }, []);
+
+  const label = status === "checking" ? "verificando…"
+    : status === "ok" ? "✅ configurada"
+    : status === "missing" ? "❌ NO configurada"
+    : "⚠️ no se pudo verificar";
+
+  return (
+    <p className="text-xs font-mono text-muted-foreground">
+      OPENAI_API_KEY: <span className="text-foreground">{label}</span>
+    </p>
+  );
+}
 
 export default function DevTestPanel() {
   const { org } = useOrganization();
@@ -174,6 +207,21 @@ export default function DevTestPanel() {
             )}
           </CardHeader>
           <CardContent className="px-4 pb-4 space-y-3">
+            {/* Diagnostics */}
+            <div className="rounded border border-border bg-muted/30 p-2 space-y-1">
+              <div className="flex items-center gap-1.5 mb-1">
+                <Activity className="h-3 w-3 text-muted-foreground" />
+                <span className="text-xs font-medium text-muted-foreground">Diagnósticos</span>
+              </div>
+              <p className="text-xs font-mono text-muted-foreground">
+                MODE: <span className="text-foreground">{import.meta.env.MODE}</span>
+              </p>
+              <p className="text-xs font-mono text-muted-foreground">
+                DEV_TOOLS: <span className="text-foreground">{import.meta.env.VITE_DEV_TOOLS || "no definido"}</span>
+              </p>
+              <OpenAIKeyStatus />
+            </div>
+            <Separator />
             {/* Step 1: Create meeting */}
             <div className="flex gap-2">
               <Button

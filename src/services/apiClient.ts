@@ -15,18 +15,19 @@ function friendlyError(status: number, body: Record<string, string>): string {
 async function invokeFunction(name: string, body: Record<string, unknown>) {
   const { data, error } = await supabase.functions.invoke(name, { body });
   if (error) {
-    // Try to parse structured error from edge function
     let parsed: Record<string, string> = {};
     let status = 500;
     try {
-      if (error.message) {
-        // FunctionsHttpError includes context
+      // Prefer context.status (reliable) over regex on message
+      const ctx = (error as any).context;
+      if (ctx?.status) {
+        status = ctx.status;
+      } else if (error.message) {
         const match = error.message.match(/(\d{3})/);
         if (match) status = parseInt(match[1]);
       }
-      if (typeof error === "object" && "context" in error) {
-        const ctx = (error as any).context;
-        if (ctx?.json) parsed = await ctx.json();
+      if (ctx?.json) {
+        parsed = await ctx.json();
       }
     } catch { /* ignore parse errors */ }
     throw new Error(friendlyError(status, parsed));
