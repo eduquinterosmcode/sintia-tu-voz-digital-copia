@@ -97,6 +97,7 @@ export interface MeetingBundle {
     id: string;
     version: number;
     transcript_text: string | null;
+    created_at: string;
   } | null;
   segments: Segment[];
   segment_page: number;
@@ -104,6 +105,7 @@ export interface MeetingBundle {
     id: string;
     version: number;
     analysis_json: AnalysisJson;
+    created_at: string;
   } | null;
   chat_messages: ChatMessage[];
   audio: {

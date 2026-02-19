@@ -68,7 +68,7 @@ export default function MeetingDetail() {
     );
   }
 
-  const { meeting, speakers, segments, analysis, chat_messages, audio } = bundle;
+  const { meeting, speakers, segments, analysis, chat_messages, audio, transcript } = bundle;
   const analysisJson = analysis?.analysis_json as AnalysisJson | null;
 
   // Build speaker map
@@ -79,6 +79,9 @@ export default function MeetingDetail() {
 
   const canAnalyze = meeting.status === "transcribed" && segments.length > 0;
   const hasTranscript = segments.length > 0;
+
+  const fmtDate = (iso: string) =>
+    new Date(iso).toLocaleString("es-CL", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 
   return (
     <div className="p-6 max-w-4xl mx-auto animate-fade-in">
@@ -97,6 +100,18 @@ export default function MeetingDetail() {
             {meeting.sectors?.name || "—"} · {new Date(meeting.created_at).toLocaleDateString("es-CL")}
             {meeting.notes && <span className="block mt-0.5 italic">{meeting.notes}</span>}
           </p>
+          <div className="flex gap-3 mt-1.5 flex-wrap">
+            {transcript && (
+              <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                Última transcripción: v{transcript.version} · {fmtDate(transcript.created_at)}
+              </span>
+            )}
+            {analysis && (
+              <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                Último análisis: v{analysis.version} · {fmtDate(analysis.created_at)}
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <StatusBadge status={meeting.status} />
