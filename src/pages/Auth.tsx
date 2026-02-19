@@ -4,15 +4,44 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/use-toast";
+import { Loader2 } from "lucide-react";
 
 export default function Auth() {
   const [isLogin, setIsLogin] = useState(true);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const { signIn, signUp } = useAuth();
   const navigate = useNavigate();
+  const { toast } = useToast();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Stub: navigate to dashboard
-    navigate("/dashboard");
+    setSubmitting(true);
+    try {
+      if (isLogin) {
+        await signIn(email, password);
+        navigate("/dashboard");
+      } else {
+        await signUp(email, password, name || undefined);
+        toast({
+          title: "Cuenta creada",
+          description: "Revisa tu correo para confirmar tu cuenta, o inicia sesión directamente.",
+        });
+        setIsLogin(true);
+      }
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Intenta de nuevo",
+        variant: "destructive",
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -37,27 +66,25 @@ export default function Auth() {
               {!isLogin && (
                 <div className="space-y-2">
                   <Label htmlFor="name">Nombre</Label>
-                  <Input id="name" placeholder="Tu nombre" />
+                  <Input id="name" placeholder="Tu nombre" value={name} onChange={(e) => setName(e.target.value)} />
                 </div>
               )}
               <div className="space-y-2">
                 <Label htmlFor="email">Correo electrónico</Label>
-                <Input id="email" type="email" placeholder="tu@email.com" />
+                <Input id="email" type="email" placeholder="tu@email.com" required value={email} onChange={(e) => setEmail(e.target.value)} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="password">Contraseña</Label>
-                <Input id="password" type="password" placeholder="••••••••" />
+                <Input id="password" type="password" placeholder="••••••••" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} />
               </div>
-              <Button type="submit" className="w-full">
+              <Button type="submit" className="w-full" disabled={submitting}>
+                {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 {isLogin ? "Ingresar" : "Registrarse"}
               </Button>
             </form>
             <p className="text-center text-sm text-muted-foreground mt-4">
               {isLogin ? "¿No tienes cuenta?" : "¿Ya tienes cuenta?"}{" "}
-              <button
-                onClick={() => setIsLogin(!isLogin)}
-                className="text-primary hover:underline font-medium"
-              >
+              <button onClick={() => setIsLogin(!isLogin)} className="text-primary hover:underline font-medium">
                 {isLogin ? "Regístrate" : "Inicia sesión"}
               </button>
             </p>

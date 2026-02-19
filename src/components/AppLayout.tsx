@@ -1,33 +1,54 @@
-import { useState } from "react";
-import { Link, Outlet, useLocation } from "react-router-dom";
-import { LayoutDashboard, Users, Settings, Menu, X, ChevronDown } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { LayoutDashboard, Settings, Menu, X, ChevronDown, LogOut, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
+import { useOrganization } from "@/hooks/useOrganization";
 
 const navItems = [
   { label: "Dashboard", to: "/dashboard", icon: LayoutDashboard },
-  { label: "Reuniones", to: "/meetings", icon: Users },
   { label: "Ajustes", to: "/settings", icon: Settings },
 ];
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
+  const { user, loading: authLoading, signOut } = useAuth();
+  const { org } = useOrganization();
 
   const isActive = (path: string) => location.pathname.startsWith(path);
 
+  useEffect(() => {
+    if (!authLoading && !user) {
+      navigate("/auth");
+    }
+  }, [authLoading, user, navigate]);
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!user) return null;
+
+  const handleSignOut = async () => {
+    await signOut();
+    navigate("/");
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-background">
-      {/* Top Nav */}
       <header className="h-14 border-b border-nav-border bg-nav flex items-center px-4 gap-4 shrink-0 z-30">
-        <button
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-          className="lg:hidden text-foreground"
-        >
+        <button onClick={() => setSidebarOpen(!sidebarOpen)} className="lg:hidden text-foreground">
           {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </button>
 
-        <Link to="/" className="flex items-center gap-2">
+        <Link to="/dashboard" className="flex items-center gap-2">
           <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
             <span className="text-primary-foreground font-display font-bold text-sm">S</span>
           </div>
@@ -36,21 +57,16 @@ export default function AppLayout() {
 
         <div className="flex-1" />
 
-        {/* Org placeholder */}
-        <button className="hidden sm:flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
-          <span>Mi Organización</span>
-          <ChevronDown className="h-3.5 w-3.5" />
-        </button>
+        <span className="hidden sm:inline text-sm text-muted-foreground">
+          {org?.name || "Cargando..."}
+        </span>
 
-        <Link to="/settings">
-          <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
-            <Settings className="h-4.5 w-4.5" />
-          </Button>
-        </Link>
+        <Button variant="ghost" size="icon" onClick={handleSignOut} className="text-muted-foreground hover:text-foreground" title="Cerrar sesión">
+          <LogOut className="h-4 w-4" />
+        </Button>
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
         <aside
           className={cn(
             "fixed lg:static inset-y-14 left-0 z-20 w-56 bg-sidebar border-r border-sidebar-border flex flex-col transition-transform duration-200",
@@ -77,15 +93,10 @@ export default function AppLayout() {
           </nav>
         </aside>
 
-        {/* Overlay */}
         {sidebarOpen && (
-          <div
-            className="fixed inset-0 z-10 bg-foreground/20 lg:hidden"
-            onClick={() => setSidebarOpen(false)}
-          />
+          <div className="fixed inset-0 z-10 bg-foreground/20 lg:hidden" onClick={() => setSidebarOpen(false)} />
         )}
 
-        {/* Main */}
         <main className="flex-1 overflow-y-auto">
           <div className="animate-fade-in">
             <Outlet />
