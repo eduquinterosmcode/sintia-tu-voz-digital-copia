@@ -110,6 +110,7 @@ export interface MeetingBundle {
   chat_messages: ChatMessage[];
   audio: {
     id: string;
+    storage_path: string;
     mime_type: string | null;
     duration_sec: number | null;
   } | null;

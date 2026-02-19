@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { getCorsHeaders, handleCorsPreflightOrForbidden } from "../_shared/cors.ts";
+import { checkRateLimit, rateLimitResponse } from "../_shared/rate-limit.ts";
 
 Deno.serve(async (req) => {
   const corsCheck = handleCorsPreflightOrForbidden(req);
@@ -26,6 +27,10 @@ Deno.serve(async (req) => {
         status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    // Rate limit: 30 bundle requests per minute per user
+    const rl = checkRateLimit(user.id, "bundle", 30, 60_000);
+    if (!rl.allowed) return rateLimitResponse(rl.retryAfterSec, corsHeaders);
 
     const url = new URL(req.url);
     const meetingId = url.searchParams.get("meeting_id");
@@ -69,7 +74,7 @@ Deno.serve(async (req) => {
           .order("version", { ascending: false }).limit(1).single(),
         supabase.from("chat_messages").select("*").eq("meeting_id", meetingId)
           .order("created_at", { ascending: false }).limit(50),
-        supabase.from("meeting_audio").select("id, mime_type, duration_sec, created_at")
+        supabase.from("meeting_audio").select("id, storage_path, mime_type, duration_sec, created_at")
           .eq("meeting_id", meetingId).order("created_at", { ascending: false }).limit(1).single(),
       ]);
 
