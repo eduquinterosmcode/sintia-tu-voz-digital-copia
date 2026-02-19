@@ -1,1 +1,13 @@
 project_id = "bpzcogoixzxlzaaijdcr"
+
+[functions.create-signed-upload-url]
+verify_jwt = false
+
+[functions.stt-transcribe]
+verify_jwt = false
+
+[functions.agent-orchestrator]
+verify_jwt = false
+
+[functions.get-meeting-bundle]
+verify_jwt = false
