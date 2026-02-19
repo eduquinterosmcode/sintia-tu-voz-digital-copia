@@ -56,6 +56,21 @@ export default function DevTestPanel() {
   const [busy, setBusy] = useState(false);
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
 
+  // Auto-select the latest meeting on mount
+  useEffect(() => {
+    if (!org || selectedMeetingId) return;
+    supabase
+      .from("meetings")
+      .select("id")
+      .eq("org_id", org.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .single()
+      .then(({ data }) => {
+        if (data) setSelectedMeetingId(data.id);
+      });
+  }, [org, selectedMeetingId]);
+
   if (!DEV_ENABLED) return null;
 
   const log = (action: string, status: "ok" | "error", detail: string) => {

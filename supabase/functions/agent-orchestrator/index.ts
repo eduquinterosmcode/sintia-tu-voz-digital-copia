@@ -127,7 +127,12 @@ async function callLLM(
     { role: "user", content: userContent },
   ];
 
-  const body: Record<string, unknown> = { model, messages, temperature, max_tokens: maxTokens };
+  // Newer OpenAI models (gpt-4o, gpt-5, o-series) use max_completion_tokens
+  const usesNewParam = /^(gpt-4o|gpt-5|o[1-9])/.test(model);
+  const body: Record<string, unknown> = {
+    model, messages, temperature,
+    ...(usesNewParam ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens }),
+  };
   if (jsonMode) body.response_format = { type: "json_object" };
 
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
