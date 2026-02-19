@@ -85,11 +85,6 @@ export async function chatWithMeeting(meetingId: string, question: string) {
 
 // ── Bundle ──────────────────────────────────────────────────────────────
 export async function getMeetingBundle(meetingId: string, segmentPage = 0, segmentLimit = 100) {
-  const { data, error } = await supabase.functions.invoke("get-meeting-bundle", {
-    body: {},
-    headers: {},
-  });
-
   // get-meeting-bundle uses query params, so we call via fetch
   const session = (await supabase.auth.getSession()).data.session;
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
