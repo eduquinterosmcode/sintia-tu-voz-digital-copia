@@ -1,10 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-};
+import { getCorsHeaders, handleCorsPreflightOrForbidden } from "../_shared/cors.ts";
+import { checkRateLimit, rateLimitResponse } from "../_shared/rate-limit.ts";
 
 interface DiarizedSegment {
   speaker: string;
@@ -48,9 +44,10 @@ async function verifyUserAndMeeting(
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+  // CORS handling
+  const corsCheck = handleCorsPreflightOrForbidden(req);
+  if (corsCheck) return corsCheck;
+  const corsHeaders = getCorsHeaders(req);
 
   try {
     const authHeader = req.headers.get("Authorization");
@@ -83,11 +80,12 @@ Deno.serve(async (req) => {
     }
 
     const { user, meeting, supabase } = await verifyUserAndMeeting(
-      supabaseUrl,
-      serviceKey,
-      authHeader,
-      meeting_id
+      supabaseUrl, serviceKey, authHeader, meeting_id
     );
+
+    // Rate limit: 3 STT requests per minute per user
+    const rl = checkRateLimit(user.id, "stt", 3, 60_000);
+    if (!rl.allowed) return rateLimitResponse(rl.retryAfterSec, corsHeaders);
 
     // Get latest audio
     const { data: audio } = await supabase
@@ -129,10 +127,7 @@ Deno.serve(async (req) => {
     const language = meeting.language || "es";
 
     // Update status
-    await supabase
-      .from("meetings")
-      .update({ status: "uploaded" })
-      .eq("id", meeting_id);
+    await supabase.from("meetings").update({ status: "uploaded" }).eq("id", meeting_id);
 
     // Call OpenAI transcription
     const formData = new FormData();
@@ -154,12 +149,7 @@ Deno.serve(async (req) => {
     if (!sttResponse.ok) {
       const errText = await sttResponse.text();
       console.error("OpenAI STT error:", sttResponse.status, errText);
-
-      await supabase
-        .from("meetings")
-        .update({ status: "error" })
-        .eq("id", meeting_id);
-
+      await supabase.from("meetings").update({ status: "error" }).eq("id", meeting_id);
       return new Response(
         JSON.stringify({ error: `Error de transcripción: ${sttResponse.status}`, detail: errText }),
         { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -238,13 +228,8 @@ Deno.serve(async (req) => {
         text: seg.text,
       }));
 
-      const { error: segError } = await supabase
-        .from("meeting_segments")
-        .insert(segmentRows);
-
-      if (segError) {
-        console.error("Segments insert error:", segError);
-      }
+      const { error: segError } = await supabase.from("meeting_segments").insert(segmentRows);
+      if (segError) console.error("Segments insert error:", segError);
     }
 
     // Get existing speaker renames
@@ -255,16 +240,11 @@ Deno.serve(async (req) => {
 
     const speakerMap: Record<string, string> = {};
     if (speakers) {
-      for (const s of speakers) {
-        speakerMap[s.speaker_label] = s.speaker_name;
-      }
+      for (const s of speakers) speakerMap[s.speaker_label] = s.speaker_name;
     }
 
     // Update meeting status
-    await supabase
-      .from("meetings")
-      .update({ status: "transcribed" })
-      .eq("id", meeting_id);
+    await supabase.from("meetings").update({ status: "transcribed" }).eq("id", meeting_id);
 
     // Log usage with duration
     const durationSec = sttResult.duration || audio.duration_sec || 0;

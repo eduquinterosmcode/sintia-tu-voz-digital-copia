@@ -1,10 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-};
+import { getCorsHeaders, handleCorsPreflightOrForbidden } from "../_shared/cors.ts";
+import { checkRateLimit, rateLimitResponse } from "../_shared/rate-limit.ts";
 
 interface Evidence {
   speaker: string;
@@ -131,23 +127,12 @@ async function callLLM(
     { role: "user", content: userContent },
   ];
 
-  const body: Record<string, unknown> = {
-    model,
-    messages,
-    temperature,
-    max_tokens: maxTokens,
-  };
-
-  if (jsonMode) {
-    body.response_format = { type: "json_object" };
-  }
+  const body: Record<string, unknown> = { model, messages, temperature, max_tokens: maxTokens };
+  if (jsonMode) body.response_format = { type: "json_object" };
 
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${openaiKey}`,
-    },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${openaiKey}` },
     body: JSON.stringify(body),
   });
 
@@ -167,9 +152,6 @@ async function callLLM(
   };
 }
 
-/**
- * Build the full system prompt for an agent, appending the output schema if available.
- */
 function buildAgentSystemPrompt(agent: AgentProfile): string {
   let prompt = agent.system_prompt;
   if (agent.output_schema_json) {
@@ -179,37 +161,26 @@ function buildAgentSystemPrompt(agent: AgentProfile): string {
   return prompt;
 }
 
-/**
- * Call LLM with retry: if JSON parsing fails, retry once with a repair prompt.
- */
 async function callLLMWithRetry(
-  openaiKey: string,
-  model: string,
-  temperature: number,
-  maxTokens: number,
-  systemPrompt: string,
-  userContent: string
+  openaiKey: string, model: string, temperature: number, maxTokens: number,
+  systemPrompt: string, userContent: string
 ): Promise<{ parsed: Record<string, unknown>; usage: { input_tokens: number; output_tokens: number } }> {
   const result = await callLLM(openaiKey, model, temperature, maxTokens, systemPrompt, userContent, true);
 
   try {
-    const parsed = JSON.parse(result.content);
-    return { parsed, usage: result.usage };
+    return { parsed: JSON.parse(result.content), usage: result.usage };
   } catch {
     console.warn("JSON parse failed, retrying with repair prompt...");
-    const repairPrompt = `${systemPrompt}\n\nTu respuesta anterior no fue JSON válido. Devuelve SOLO JSON válido que siga el schema. Sin claves extra ni texto fuera del JSON.`;
+    const repairPrompt = `${systemPrompt}\n\nTu respuesta anterior no fue JSON válido. Devuelve SOLO JSON válido que siga el schema.`;
     const retryResult = await callLLM(openaiKey, model, temperature, maxTokens, repairPrompt, userContent, true);
-
     const totalUsage = {
       input_tokens: result.usage.input_tokens + retryResult.usage.input_tokens,
       output_tokens: result.usage.output_tokens + retryResult.usage.output_tokens,
     };
-
     try {
-      const parsed = JSON.parse(retryResult.content);
-      return { parsed, usage: totalUsage };
+      return { parsed: JSON.parse(retryResult.content), usage: totalUsage };
     } catch {
-      console.error("JSON parse failed after retry, returning raw");
+      console.error("JSON parse failed after retry");
       return { parsed: { raw: retryResult.content, error: "JSON inválido después de retry" }, usage: totalUsage };
     }
   }
@@ -218,24 +189,22 @@ async function callLLMWithRetry(
 // ── Main Handler ────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+  const corsCheck = handleCorsPreflightOrForbidden(req);
+  if (corsCheck) return corsCheck;
+  const corsHeaders = getCorsHeaders(req);
 
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       return new Response(JSON.stringify({ error: "No autorizado" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     const { meeting_id, mode, user_question } = await req.json();
     if (!meeting_id || !mode) {
       return new Response(JSON.stringify({ error: "Faltan parámetros: meeting_id, mode" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -244,22 +213,22 @@ Deno.serve(async (req) => {
     const openaiKey = Deno.env.get("OPENAI_API_KEY");
     if (!openaiKey) {
       return new Response(
-        JSON.stringify({
-          error: "missing_openai_key",
-          how_to_fix: "Agrega OPENAI_API_KEY en Supabase Edge Function Secrets",
-        }),
+        JSON.stringify({ error: "missing_openai_key", how_to_fix: "Agrega OPENAI_API_KEY en Supabase Edge Function Secrets" }),
         { status: 412, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     const { user, meeting, supabase } = await verifyAuth(supabaseUrl, serviceKey, authHeader, meeting_id);
 
+    // Rate limit: analyze=5/min, chat=10/min
+    const rlAction = mode === "analyze" ? "analyze" : "chat";
+    const rlMax = mode === "analyze" ? 5 : 10;
+    const rl = checkRateLimit(user.id, rlAction, rlMax, 60_000);
+    if (!rl.allowed) return rateLimitResponse(rl.retryAfterSec, corsHeaders);
+
     // Get provider settings
     const { data: provSettings } = await supabase
-      .from("org_provider_settings")
-      .select("*")
-      .eq("org_id", meeting.org_id)
-      .single();
+      .from("org_provider_settings").select("*").eq("org_id", meeting.org_id).single();
 
     const llmModel = provSettings?.llm_model || "gpt-4o";
     const temperature = provSettings?.temperature || 0.2;
@@ -267,23 +236,13 @@ Deno.serve(async (req) => {
 
     // Get speaker renames
     const { data: speakers } = await supabase
-      .from("meeting_speakers")
-      .select("speaker_label, speaker_name")
-      .eq("meeting_id", meeting_id);
-
+      .from("meeting_speakers").select("speaker_label, speaker_name").eq("meeting_id", meeting_id);
     const speakerMap: Record<string, string> = {};
-    if (speakers) {
-      for (const s of speakers) {
-        speakerMap[s.speaker_label] = s.speaker_name;
-      }
-    }
+    if (speakers) for (const s of speakers) speakerMap[s.speaker_label] = s.speaker_name;
 
     // Get sector info
     const { data: sector } = await supabase
-      .from("sectors")
-      .select("key, name, description")
-      .eq("id", meeting.sector_id)
-      .single();
+      .from("sectors").select("key, name, description").eq("id", meeting.sector_id).single();
 
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
@@ -291,23 +250,22 @@ Deno.serve(async (req) => {
     if (mode === "analyze") {
       return await handleAnalyze({
         supabase, meetingId: meeting_id, meeting, user, sector, speakerMap,
-        openaiKey, llmModel, temperature, maxTokens,
-        totalInputTokens, totalOutputTokens,
+        openaiKey, llmModel, temperature, maxTokens, totalInputTokens, totalOutputTokens, corsHeaders,
       });
     } else if (mode === "chat") {
       return await handleChat({
         supabase, meetingId: meeting_id, meeting, user, speakerMap,
         openaiKey, llmModel, temperature, maxTokens, userQuestion: user_question,
-        totalInputTokens, totalOutputTokens,
+        totalInputTokens, totalOutputTokens, corsHeaders,
       });
     } else {
       return new Response(JSON.stringify({ error: "Modo no válido. Usa 'analyze' o 'chat'" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
   } catch (err) {
     console.error("Orchestrator error:", err);
+    const corsHeaders = getCorsHeaders(req);
     return new Response(
       JSON.stringify({ error: err instanceof Error ? err.message : "Error interno" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -330,39 +288,33 @@ interface AnalyzeParams {
   maxTokens: number;
   totalInputTokens: number;
   totalOutputTokens: number;
+  corsHeaders: Record<string, string>;
 }
 
 async function handleAnalyze(p: AnalyzeParams): Promise<Response> {
-  const { supabase, meetingId, meeting, user, sector, speakerMap, openaiKey, llmModel, temperature, maxTokens } = p;
+  const { supabase, meetingId, meeting, user, sector, speakerMap, openaiKey, llmModel, temperature, maxTokens, corsHeaders } = p;
   let totalInputTokens = p.totalInputTokens;
   let totalOutputTokens = p.totalOutputTokens;
 
-  // Get agent profiles for sector
   const { data: agents } = await supabase
-    .from("agent_profiles")
-    .select("*")
-    .eq("sector_id", meeting.sector_id as string)
-    .eq("enabled", true)
-    .order("order_index");
+    .from("agent_profiles").select("*")
+    .eq("sector_id", meeting.sector_id as string).eq("enabled", true).order("order_index");
 
   if (!agents || agents.length === 0) {
-    return new Response(
-      JSON.stringify({ error: "No hay agentes configurados para este sector" }),
-      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return new Response(JSON.stringify({ error: "No hay agentes configurados para este sector" }), {
+      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   const coordinator = agents.find((a: AgentProfile) => a.role === "coordinator") as AgentProfile | undefined;
   const specialists = agents.filter((a: AgentProfile) => a.role === "specialist") as AgentProfile[];
 
   if (!coordinator) {
-    return new Response(
-      JSON.stringify({ error: "No hay coordinador configurado" }),
-      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return new Response(JSON.stringify({ error: "No hay coordinador configurado" }), {
+      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
-  // Get segments
   const segments = await getRelevantSegments(supabase, meetingId);
   const transcriptText = formatSegmentsForPrompt(segments, speakerMap);
 
@@ -373,7 +325,7 @@ async function handleAnalyze(p: AnalyzeParams): Promise<Response> {
     );
   }
 
-  // Step 1: Run specialists in parallel with schema enforcement
+  // Run specialists in parallel
   const specialistPromises = specialists.map(async (spec) => {
     const systemPrompt = buildAgentSystemPrompt(spec);
     const userContent = `Sector: ${sector?.name || "General"}
@@ -387,16 +339,14 @@ Tu foco: ${spec.name}
 Produce tu análisis en JSON según el schema proporcionado.`;
 
     const result = await callLLMWithRetry(openaiKey, llmModel, temperature, maxTokens, systemPrompt, userContent);
-
     totalInputTokens += result.usage.input_tokens;
     totalOutputTokens += result.usage.output_tokens;
-
     return { agent: spec.name, output: result.parsed };
   });
 
   const specialistResults = await Promise.all(specialistPromises);
 
-  // Step 2: Coordinator consolidation with schema enforcement
+  // Coordinator consolidation
   const coordSystemPrompt = buildAgentSystemPrompt(coordinator);
   const consolidationContent = `Sector: ${sector?.name || "General"}
 Reunión: ${meeting.title}
@@ -410,10 +360,7 @@ ${specialistResults.map((r) => `--- ${r.agent} ---\n${JSON.stringify(r.output, n
 
 Consolida los resultados en el JSON final según el schema de coordinador.`;
 
-  const coordResult = await callLLMWithRetry(
-    openaiKey, llmModel, temperature, maxTokens * 2, coordSystemPrompt, consolidationContent
-  );
-
+  const coordResult = await callLLMWithRetry(openaiKey, llmModel, temperature, maxTokens * 2, coordSystemPrompt, consolidationContent);
   totalInputTokens += coordResult.usage.input_tokens;
   totalOutputTokens += coordResult.usage.output_tokens;
 
@@ -421,54 +368,33 @@ Consolida los resultados en el JSON final según el schema de coordinador.`;
 
   // Save analysis
   const { data: latestAnalysis } = await supabase
-    .from("meeting_analyses")
-    .select("version")
-    .eq("meeting_id", meetingId)
-    .order("version", { ascending: false })
-    .limit(1)
-    .single();
+    .from("meeting_analyses").select("version").eq("meeting_id", meetingId)
+    .order("version", { ascending: false }).limit(1).single();
 
   const newVersion = (latestAnalysis?.version || 0) + 1;
 
   const { data: analysis, error: analysisError } = await supabase
     .from("meeting_analyses")
     .insert({
-      meeting_id: meetingId,
-      version: newVersion,
-      sector_id: meeting.sector_id as string,
-      analysis_json: analysisJson,
-      created_by: user.id,
+      meeting_id: meetingId, version: newVersion, sector_id: meeting.sector_id as string,
+      analysis_json: analysisJson, created_by: user.id,
     })
-    .select("id")
-    .single();
+    .select("id").single();
 
-  if (analysisError) {
-    console.error("Analysis insert error:", analysisError);
-  }
+  if (analysisError) console.error("Analysis insert error:", analysisError);
 
-  // Update meeting status
-  await supabase
-    .from("meetings")
-    .update({ status: "analyzed" })
-    .eq("id", meetingId);
+  await supabase.from("meetings").update({ status: "analyzed" }).eq("id", meetingId);
 
   // Log usage
   await supabase.from("usage_events").insert({
-    org_id: meeting.org_id as string,
-    meeting_id: meetingId,
-    kind: "llm",
-    provider: "openai",
-    model: llmModel,
+    org_id: meeting.org_id as string, meeting_id: meetingId,
+    kind: "llm", provider: "openai", model: llmModel,
     units: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens },
     cost_estimate_usd: null,
   });
 
   return new Response(
-    JSON.stringify({
-      analysis_id: analysis?.id,
-      version: newVersion,
-      analysis: analysisJson,
-    }),
+    JSON.stringify({ analysis_id: analysis?.id, version: newVersion, analysis: analysisJson }),
     { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
 }
@@ -488,26 +414,23 @@ interface ChatParams {
   userQuestion: string;
   totalInputTokens: number;
   totalOutputTokens: number;
+  corsHeaders: Record<string, string>;
 }
 
 async function handleChat(p: ChatParams): Promise<Response> {
-  const { supabase, meetingId, meeting, user, speakerMap, openaiKey, llmModel, temperature, maxTokens, userQuestion } = p;
+  const { supabase, meetingId, meeting, user, speakerMap, openaiKey, llmModel, temperature, maxTokens, userQuestion, corsHeaders } = p;
   let totalInputTokens = p.totalInputTokens;
   let totalOutputTokens = p.totalOutputTokens;
 
   if (!userQuestion) {
     return new Response(JSON.stringify({ error: "Falta user_question para modo chat" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
   // Save user message
   await supabase.from("chat_messages").insert({
-    meeting_id: meetingId,
-    user_id: user.id,
-    role: "user",
-    content: userQuestion,
+    meeting_id: meetingId, user_id: user.id, role: "user", content: userQuestion,
   });
 
   // Retrieve relevant segments
@@ -516,28 +439,19 @@ async function handleChat(p: ChatParams): Promise<Response> {
 
   // Get latest analysis summary if available
   const { data: latestAnalysis } = await supabase
-    .from("meeting_analyses")
-    .select("analysis_json")
-    .eq("meeting_id", meetingId)
-    .order("version", { ascending: false })
-    .limit(1)
-    .single();
+    .from("meeting_analyses").select("analysis_json").eq("meeting_id", meetingId)
+    .order("version", { ascending: false }).limit(1).single();
 
   let analysisSummary = "";
   if (latestAnalysis?.analysis_json) {
     const aj = latestAnalysis.analysis_json as Record<string, unknown>;
-    if (aj.summary) {
-      analysisSummary = `\nRESUMEN DEL ANÁLISIS PREVIO:\n${aj.summary}\n`;
-    }
+    if (aj.summary) analysisSummary = `\nRESUMEN DEL ANÁLISIS PREVIO:\n${aj.summary}\n`;
   }
 
   // Get recent chat history
   const { data: recentMessages } = await supabase
-    .from("chat_messages")
-    .select("role, content")
-    .eq("meeting_id", meetingId)
-    .order("created_at", { ascending: false })
-    .limit(10);
+    .from("chat_messages").select("role, content").eq("meeting_id", meetingId)
+    .order("created_at", { ascending: false }).limit(10);
 
   const chatHistory = (recentMessages || [])
     .reverse()
@@ -559,7 +473,6 @@ ${chatHistory}
 PREGUNTA DEL USUARIO: ${userQuestion}`;
 
   const result = await callLLM(openaiKey, llmModel, temperature, maxTokens, systemPrompt, userContent, false);
-
   totalInputTokens += result.usage.input_tokens;
   totalOutputTokens += result.usage.output_tokens;
 
@@ -567,33 +480,23 @@ PREGUNTA DEL USUARIO: ${userQuestion}`;
   const { data: assistantMsg } = await supabase
     .from("chat_messages")
     .insert({
-      meeting_id: meetingId,
-      user_id: user.id,
-      role: "assistant",
-      content: result.content,
+      meeting_id: meetingId, user_id: user.id, role: "assistant", content: result.content,
       evidence_json: segments.slice(0, 5).map((s) => ({
         speaker: speakerMap[s.speaker_label] || s.speaker_name || s.speaker_label,
-        t_start_sec: s.t_start_sec,
-        t_end_sec: s.t_end_sec,
-        quote: s.text.substring(0, 150),
+        t_start_sec: s.t_start_sec, t_end_sec: s.t_end_sec, quote: s.text.substring(0, 150),
       })),
     })
-    .select("id, content, evidence_json, created_at")
-    .single();
+    .select("id, content, evidence_json, created_at").single();
 
   // Log usage
   await supabase.from("usage_events").insert({
-    org_id: meeting.org_id as string,
-    meeting_id: meetingId,
-    kind: "llm",
-    provider: "openai",
-    model: llmModel,
+    org_id: meeting.org_id as string, meeting_id: meetingId,
+    kind: "llm", provider: "openai", model: llmModel,
     units: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens },
     cost_estimate_usd: null,
   });
 
   return new Response(JSON.stringify({ message: assistantMsg }), {
-    status: 200,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
