@@ -71,12 +71,15 @@ Deno.serve(async (req) => {
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const openaiKey = Deno.env.get("Openai SintIA Test");
+    const openaiKey = Deno.env.get("OPENAI_API_KEY");
     if (!openaiKey) {
-      return new Response(JSON.stringify({ error: "API key de OpenAI no configurada" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({
+          error: "missing_openai_key",
+          how_to_fix: "Agrega OPENAI_API_KEY en Supabase Edge Function Secrets",
+        }),
+        { status: 412, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     const { user, meeting, supabase } = await verifyUserAndMeeting(
@@ -136,7 +139,7 @@ Deno.serve(async (req) => {
     const fileName = audio.storage_path.split("/").pop() || "audio.webm";
     formData.append("file", new File([audioBlob], fileName, { type: audio.mime_type || "audio/webm" }));
     formData.append("model", sttModel);
-    formData.append("language", language.split("-")[0]); // "es-CL" -> "es"
+    formData.append("language", language.split("-")[0]);
     formData.append("response_format", "verbose_json");
     formData.append("timestamp_granularities[]", "segment");
 
@@ -166,7 +169,7 @@ Deno.serve(async (req) => {
     const sttResult = await sttResponse.json();
     console.log("STT result keys:", Object.keys(sttResult));
 
-    // Parse segments - OpenAI returns segments with speaker info when using diarization models
+    // Parse segments
     const rawSegments: DiarizedSegment[] = [];
     const segments = sttResult.segments || [];
 
@@ -180,7 +183,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    // If no speaker info from model, assign all to SPEAKER_0
     if (rawSegments.length === 0 && sttResult.text) {
       rawSegments.push({
         speaker: "SPEAKER_0",
@@ -264,14 +266,16 @@ Deno.serve(async (req) => {
       .update({ status: "transcribed" })
       .eq("id", meeting_id);
 
-    // Log usage
+    // Log usage with duration
+    const durationSec = sttResult.duration || audio.duration_sec || 0;
+    const durationMin = Math.ceil(durationSec / 60);
     await supabase.from("usage_events").insert({
       org_id: meeting.org_id,
       meeting_id,
       kind: "stt",
       provider: "openai",
       model: sttModel,
-      units: { duration_sec: sttResult.duration || audio.duration_sec || 0 },
+      units: { duration_sec: durationSec, duration_min: durationMin },
       cost_estimate_usd: null,
     });
 
