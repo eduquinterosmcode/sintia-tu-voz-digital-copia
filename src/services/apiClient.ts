@@ -176,3 +176,11 @@ export async function listMeetings(orgId: string) {
   if (error) throw error;
   return data;
 }
+
+// ── Demo ────────────────────────────────────────────────────────────────
+export async function createDemoMeeting(orgId: string, sectorKey: string) {
+  const data = await invokeFunction("create-demo-meeting", {
+    org_id: orgId, sector_key: sectorKey,
+  });
+  return data as { meeting_id: string; reused: boolean; status: string };
+}

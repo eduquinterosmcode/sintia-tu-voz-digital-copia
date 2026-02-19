@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useState } from "react";
 import StatusBadge from "@/components/StatusBadge";
 import AudioRecorder from "@/components/AudioRecorder";
+import AudioPlayer from "@/components/AudioPlayer";
 import TranscriptTab from "@/features/transcript/TranscriptTab";
 import AnalysisSummaryTab from "@/features/analysis/AnalysisSummaryTab";
 import DecisionsTab from "@/features/analysis/DecisionsTab";
@@ -34,7 +35,7 @@ export default function MeetingDetail() {
     try {
       await analyzeMeeting(id);
       toast({ title: "Análisis completado", description: "Los resultados están listos." });
-      handleRefresh();
+      refetch();
     } catch (err) {
       toast({
         title: "Error en análisis",
@@ -124,10 +125,29 @@ export default function MeetingDetail() {
         </div>
       </div>
 
-      {/* Show audio recorder if no audio */}
-      {!audio && meeting.status === "draft" && (
+      {/* Audio player or recorder */}
+      {audio ? (
+        <div className="mb-6">
+          <AudioPlayer
+            storagePath={audio.storage_path}
+            mimeType={audio.mime_type}
+            durationSec={audio.duration_sec}
+          />
+        </div>
+      ) : meeting.status === "draft" ? (
         <div className="mb-6">
           <AudioRecorder meetingId={meeting.id} onUploadComplete={handleRefresh} />
+        </div>
+      ) : null}
+
+      {/* Progress indicators */}
+      {analyzing && (
+        <div className="mb-4 flex items-center gap-3 p-4 rounded-lg border border-primary/20 bg-primary/5">
+          <Loader2 className="h-5 w-5 animate-spin text-primary" />
+          <div>
+            <p className="text-sm font-medium text-foreground">Analizando reunión...</p>
+            <p className="text-xs text-muted-foreground">Los agentes de IA están procesando la transcripción. Esto puede tomar 30-60 segundos.</p>
+          </div>
         </div>
       )}
 

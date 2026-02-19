@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.get-meeting-bundle]
 verify_jwt = false
+
+[functions.create-demo-meeting]
+verify_jwt = false

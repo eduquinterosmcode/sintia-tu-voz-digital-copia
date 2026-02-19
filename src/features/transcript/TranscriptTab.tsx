@@ -94,11 +94,23 @@ export default function TranscriptTab({ meetingId, segments, speakers, hasAudio,
   if (segments.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center space-y-4">
-        <p className="text-muted-foreground text-sm">Audio disponible. Haz clic en "Transcribir" para generar la transcripción.</p>
-        <Button onClick={handleTranscribe} disabled={transcribing}>
-          {transcribing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
-          {transcribing ? "Transcribiendo..." : "Transcribir"}
-        </Button>
+        {transcribing ? (
+          <>
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <div>
+              <p className="text-sm font-medium text-foreground">Transcribiendo audio...</p>
+              <p className="text-xs text-muted-foreground mt-1">Enviando audio a OpenAI para transcripción. Esto puede tomar 1-3 minutos según la duración.</p>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-muted-foreground text-sm">Audio disponible. Haz clic en "Transcribir" para generar la transcripción.</p>
+            <Button onClick={handleTranscribe}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Transcribir
+            </Button>
+          </>
+        )}
       </div>
     );
   }

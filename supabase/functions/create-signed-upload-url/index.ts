@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { getCorsHeaders, handleCorsPreflightOrForbidden } from "../_shared/cors.ts";
+import { checkRateLimit, rateLimitResponse } from "../_shared/rate-limit.ts";
 
 Deno.serve(async (req) => {
   const corsCheck = handleCorsPreflightOrForbidden(req);
@@ -26,6 +27,10 @@ Deno.serve(async (req) => {
         status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    // Rate limit: 10 upload URL requests per minute per user
+    const rl = checkRateLimit(user.id, "upload-url", 10, 60_000);
+    if (!rl.allowed) return rateLimitResponse(rl.retryAfterSec, corsHeaders);
 
     const { meeting_id, filename, mime_type } = await req.json();
     if (!meeting_id || !filename || !mime_type) {
