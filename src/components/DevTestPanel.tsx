@@ -229,7 +229,7 @@ export default function DevTestPanel() {
                 variant="outline"
                 className="flex-1 text-xs"
                 disabled={busy}
-                onClick={() => handleCreateSample("edificios")}
+                onClick={() => handleCreateSample("building_admin")}
               >
                 {busy ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
                 Crear (Edificios)
@@ -239,7 +239,7 @@ export default function DevTestPanel() {
                 variant="outline"
                 className="flex-1 text-xs"
                 disabled={busy}
-                onClick={() => handleCreateSample("negocios")}
+                onClick={() => handleCreateSample("business")}
               >
                 Crear (Negocios)
               </Button>
