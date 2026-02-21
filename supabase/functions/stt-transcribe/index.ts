@@ -125,6 +125,7 @@ Deno.serve(async (req) => {
 
     const sttModel = provSettings?.stt_model || "gpt-4o-transcribe";
     const language = meeting.language || "es";
+    const isWhisper = sttModel.startsWith("whisper");
 
     // Update status
     await supabase.from("meetings").update({ status: "uploaded" }).eq("id", meeting_id);
@@ -135,8 +136,11 @@ Deno.serve(async (req) => {
     formData.append("file", new File([audioBlob], fileName, { type: audio.mime_type || "audio/webm" }));
     formData.append("model", sttModel);
     formData.append("language", language.split("-")[0]);
-    formData.append("response_format", "verbose_json");
-    formData.append("timestamp_granularities[]", "segment");
+    // gpt-4o-transcribe only supports "json" or "text"; whisper supports "verbose_json"
+    formData.append("response_format", isWhisper ? "verbose_json" : "json");
+    if (isWhisper) {
+      formData.append("timestamp_granularities[]", "segment");
+    }
 
     console.log(`Calling OpenAI STT with model=${sttModel}, language=${language}`);
 
