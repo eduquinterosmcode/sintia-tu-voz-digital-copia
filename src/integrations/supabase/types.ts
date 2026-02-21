@@ -537,7 +537,44 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      agent_profiles_public: {
+        Row: {
+          created_at: string | null
+          enabled: boolean | null
+          id: string | null
+          name: string | null
+          order_index: number | null
+          role: string | null
+          sector_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          enabled?: boolean | null
+          id?: string | null
+          name?: string | null
+          order_index?: number | null
+          role?: string | null
+          sector_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          enabled?: boolean | null
+          id?: string | null
+          name?: string | null
+          order_index?: number | null
+          role?: string | null
+          sector_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_profiles_sector_id_fkey"
+            columns: ["sector_id"]
+            isOneToOne: false
+            referencedRelation: "sectors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
       meeting_org_id: { Args: { _meeting_id: string }; Returns: string }
