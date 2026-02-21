@@ -1,10 +1,11 @@
 import { useParams, Link } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Loader2, Play, RefreshCw } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { ArrowLeft, Loader2, Play, RefreshCw, ChevronDown, FileText, RotateCcw } from "lucide-react";
 import { useMeetingBundle, AnalysisJson } from "@/hooks/useMeetingBundle";
 import { useQueryClient } from "@tanstack/react-query";
-import { analyzeMeeting } from "@/services/apiClient";
+import { analyzeMeeting, transcribeMeeting } from "@/services/apiClient";
 import { useToast } from "@/hooks/use-toast";
 import { useState } from "react";
 import StatusBadge from "@/components/StatusBadge";
@@ -24,6 +25,7 @@ export default function MeetingDetail() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [analyzing, setAnalyzing] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
 
   const handleRefresh = () => {
     queryClient.invalidateQueries({ queryKey: ["meeting-bundle", id] });
@@ -44,6 +46,24 @@ export default function MeetingDetail() {
       });
     } finally {
       setAnalyzing(false);
+    }
+  };
+
+  const handleTranscribeOnly = async () => {
+    if (!id) return;
+    setTranscribing(true);
+    try {
+      await transcribeMeeting(id);
+      toast({ title: "Transcripción completada", description: "Puedes revisar la transcripción." });
+      refetch();
+    } catch (err) {
+      toast({
+        title: "Error en transcripción",
+        description: err instanceof Error ? err.message : "Intenta de nuevo",
+        variant: "destructive",
+      });
+    } finally {
+      setTranscribing(false);
     }
   };
 
@@ -78,8 +98,9 @@ export default function MeetingDetail() {
     speakerMap[s.speaker_label] = s.speaker_name;
   });
 
-  const canAnalyze = (meeting.status === "transcribed" || meeting.status === "analyzed") && segments.length > 0;
+  const canAnalyze = (meeting.status === "transcribed" || meeting.status === "analyzed" || meeting.status === "uploaded") && (segments.length > 0 || meeting.status === "uploaded");
   const hasTranscript = segments.length > 0;
+  const isProcessing = analyzing || transcribing;
 
   const fmtDate = (iso: string) =>
     new Date(iso).toLocaleString("es-CL", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -117,10 +138,29 @@ export default function MeetingDetail() {
         <div className="flex items-center gap-2 shrink-0">
           <StatusBadge status={meeting.status} />
           {canAnalyze && (
-            <Button onClick={handleAnalyze} disabled={analyzing} size="sm">
-              {analyzing ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Play className="h-3 w-3 mr-1.5" />}
-              Analizar
-            </Button>
+            <div className="flex items-center">
+              <Button onClick={handleAnalyze} disabled={isProcessing} size="sm" className="rounded-r-none">
+                {analyzing ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Play className="h-3 w-3 mr-1.5" />}
+                Analizar
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" disabled={isProcessing} className="rounded-l-none border-l border-primary-foreground/20 px-2">
+                    <ChevronDown className="h-3 w-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={handleTranscribeOnly} disabled={transcribing}>
+                    <FileText className="h-4 w-4 mr-2" />
+                    Solo transcribir
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleAnalyze} disabled={analyzing || !hasTranscript}>
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Re-analizar
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           )}
         </div>
       </div>
@@ -136,17 +176,23 @@ export default function MeetingDetail() {
         </div>
       ) : meeting.status === "draft" ? (
         <div className="mb-6">
-          <AudioRecorder meetingId={meeting.id} onUploadComplete={handleRefresh} />
+          <AudioRecorder meetingId={meeting.id} onComplete={handleRefresh} />
         </div>
       ) : null}
 
       {/* Progress indicators */}
-      {analyzing && (
+      {(analyzing || transcribing) && (
         <div className="mb-4 flex items-center gap-3 p-4 rounded-lg border border-primary/20 bg-primary/5">
           <Loader2 className="h-5 w-5 animate-spin text-primary" />
           <div>
-            <p className="text-sm font-medium text-foreground">Analizando reunión...</p>
-            <p className="text-xs text-muted-foreground">Los agentes de IA están procesando la transcripción. Esto puede tomar 30-60 segundos.</p>
+            <p className="text-sm font-medium text-foreground">
+              {analyzing ? "Analizando reunión..." : "Transcribiendo audio..."}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {analyzing
+                ? "Los agentes de IA están procesando la transcripción. Esto puede tomar 30-60 segundos."
+                : "Convirtiendo audio a texto. Esto puede tomar 1-2 minutos según la duración."}
+            </p>
           </div>
         </div>
       )}
