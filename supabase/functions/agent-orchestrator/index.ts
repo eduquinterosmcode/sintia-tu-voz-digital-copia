@@ -365,11 +365,13 @@ ${specialistResults.map((r) => `--- ${r.agent} ---\n${JSON.stringify(r.output, n
 
 Consolida los resultados en el JSON final según el schema de coordinador.`;
 
-  const coordResult = await callLLMWithRetry(openaiKey, llmModel, temperature, maxTokens * 2, coordSystemPrompt, consolidationContent);
+  const coordResult = await callLLMWithRetry(openaiKey, llmModel, temperature, maxTokens * 3, coordSystemPrompt, consolidationContent);
   totalInputTokens += coordResult.usage.input_tokens;
   totalOutputTokens += coordResult.usage.output_tokens;
 
   const analysisJson = coordResult.parsed;
+  console.log("Coordinator result keys:", Object.keys(analysisJson));
+  console.log("Coordinator result preview:", JSON.stringify(analysisJson).substring(0, 500));
 
   // Save analysis
   const { data: latestAnalysis } = await supabase
