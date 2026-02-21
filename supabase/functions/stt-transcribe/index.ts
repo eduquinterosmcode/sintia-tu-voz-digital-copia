@@ -123,7 +123,7 @@ Deno.serve(async (req) => {
       .eq("org_id", meeting.org_id)
       .single();
 
-    const sttModel = provSettings?.stt_model || "gpt-4o-transcribe";
+    const sttModel = provSettings?.stt_model || "whisper-1";
     const language = meeting.language || "es";
     const isWhisper = sttModel.startsWith("whisper");
 
