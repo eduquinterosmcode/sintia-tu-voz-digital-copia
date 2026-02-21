@@ -3,7 +3,7 @@ import { getCorsHeaders, handleCorsPreflightOrForbidden } from "../_shared/cors.
 import { checkRateLimit, rateLimitResponse } from "../_shared/rate-limit.ts";
 
 const DEMO_TRANSCRIPTS: Record<string, { title: string; segments: { speaker: string; start: number; end: number; text: string }[] }> = {
-  edificios: {
+  building_admin: {
     title: "Demo — Reunión de Comité de Administración",
     segments: [
       { speaker: "SPEAKER_0", start: 0, end: 15, text: "Buenos días a todos, vamos a revisar los temas pendientes del edificio. Primero, el informe de gastos comunes del mes." },
@@ -18,7 +18,7 @@ const DEMO_TRANSCRIPTS: Record<string, { title: string; segments: { speaker: str
       { speaker: "SPEAKER_0", start: 186, end: 210, text: "Enviemos primero una carta formal recordando el reglamento interno. Si persiste, aplicamos la multa según el artículo 15. ¿Algo más? Si no, cerramos la sesión. Próxima reunión el primer martes del mes." },
     ],
   },
-  negocios: {
+  business: {
     title: "Demo — Reunión de Planificación Trimestral",
     segments: [
       { speaker: "SPEAKER_0", start: 0, end: 18, text: "Empecemos con la revisión del Q3. Las ventas cerraron en 45 millones, un 8% sobre el target. El equipo comercial tuvo un gran trimestre." },
@@ -99,7 +99,8 @@ Deno.serve(async (req) => {
       .select("id, status")
       .eq("org_id", org_id)
       .eq("sector_id", sector.id)
-      .eq("title", demoTitle)
+      .or(`title.eq.${demoTitle},title.like.[TEST]%`)
+      .order("created_at", { ascending: false })
       .limit(1)
       .single();
 
@@ -177,8 +178,8 @@ Deno.serve(async (req) => {
 
     // Insert speaker names
     const speakerNames: Record<string, string> = {
-      edificios: JSON.stringify({ SPEAKER_0: "Presidente", SPEAKER_1: "Administradora María", SPEAKER_2: "Copropietario Juan" }),
-      negocios: JSON.stringify({ SPEAKER_0: "CEO Andrés", SPEAKER_1: "Head Marketing Laura", SPEAKER_2: "CTO Diego" }),
+      building_admin: JSON.stringify({ SPEAKER_0: "Presidente", SPEAKER_1: "Administradora María", SPEAKER_2: "Copropietario Juan" }),
+      business: JSON.stringify({ SPEAKER_0: "CEO Andrés", SPEAKER_1: "Head Marketing Laura", SPEAKER_2: "CTO Diego" }),
     };
 
     const names = JSON.parse(speakerNames[sector_key] || "{}") as Record<string, string>;
