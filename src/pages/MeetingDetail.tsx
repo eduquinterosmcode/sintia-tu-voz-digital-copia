@@ -78,7 +78,7 @@ export default function MeetingDetail() {
     speakerMap[s.speaker_label] = s.speaker_name;
   });
 
-  const canAnalyze = meeting.status === "transcribed" && segments.length > 0;
+  const canAnalyze = (meeting.status === "transcribed" || meeting.status === "analyzed") && segments.length > 0;
   const hasTranscript = segments.length > 0;
 
   const fmtDate = (iso: string) =>
