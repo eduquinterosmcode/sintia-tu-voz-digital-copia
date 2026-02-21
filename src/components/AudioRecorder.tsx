@@ -23,6 +23,21 @@ interface AudioRecorderProps {
 const DURATION_WARNING_SEC = 60 * 60; // 60 minutes
 const supportsPause = typeof MediaRecorder !== "undefined" && typeof MediaRecorder.prototype.pause === "function";
 
+/** Pick best supported mimeType with fallback chain */
+function pickMimeType(): string | undefined {
+  if (typeof MediaRecorder === "undefined") return undefined;
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/ogg;codecs=opus",
+  ];
+  for (const mt of candidates) {
+    if (MediaRecorder.isTypeSupported(mt)) return mt;
+  }
+  return undefined; // let browser choose
+}
+
 export default function AudioRecorder({ meetingId: existingMeetingId, onComplete, onCancel }: AudioRecorderProps) {
   const { org } = useOrganization();
   const { toast } = useToast();
@@ -96,7 +111,10 @@ export default function AudioRecorder({ meetingId: existingMeetingId, onComplete
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
-      const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+      const chosenMime = pickMimeType();
+      const recorderOptions: MediaRecorderOptions = chosenMime ? { mimeType: chosenMime } : {};
+      const recorder = new MediaRecorder(stream, recorderOptions);
+      const actualMime = recorder.mimeType || chosenMime || "audio/webm";
       chunks.current = [];
 
       recorder.ondataavailable = (e) => {
@@ -104,7 +122,7 @@ export default function AudioRecorder({ meetingId: existingMeetingId, onComplete
       };
 
       recorder.onstop = () => {
-        const blob = new Blob(chunks.current, { type: "audio/webm" });
+        const blob = new Blob(chunks.current, { type: actualMime });
         // Clean previous blob URL
         if (audioUrl) URL.revokeObjectURL(audioUrl);
         setAudioBlob(blob);
@@ -187,31 +205,44 @@ export default function AudioRecorder({ meetingId: existingMeetingId, onComplete
 
     try {
       let targetMeetingId = existingMeetingId;
+      let createdNewMeeting = false;
       const blob = activeTab === "record" ? audioBlob! : uploadedFile!;
-      const filename = activeTab === "record" ? "grabacion.webm" : uploadedFile!.name;
-      const mimeType = activeTab === "record" ? "audio/webm" : (uploadedFile!.type || "audio/mpeg");
+      const recordedMime = audioBlob?.type || "audio/webm";
+      const filename = activeTab === "record"
+        ? `grabacion.${recordedMime.includes("mp4") ? "m4a" : "webm"}`
+        : uploadedFile!.name;
+      const mimeType = activeTab === "record" ? recordedMime : (uploadedFile!.type || "audio/mpeg");
 
-      // 1. Create meeting if needed
+      // 1. Create meeting if needed (stays in draft)
       if (!targetMeetingId) {
         if (!org) throw new Error("No se encontró la organización.");
         const result = await createMeeting(org.id, sectorId, title.trim(), notes || undefined);
         targetMeetingId = result.id;
+        createdNewMeeting = true;
       }
 
-      // 2. Update status to 'uploaded'
-      const { error: updateError } = await supabase
-        .from("meetings")
-        .update({ status: "uploaded" })
-        .eq("id", targetMeetingId);
-      if (updateError) throw updateError;
+      try {
+        // 2. Upload audio first
+        const { signed_url, storage_path, token } = await getSignedUploadUrl(targetMeetingId, filename, mimeType);
+        await uploadAudioToStorage(signed_url, token, blob, mimeType);
 
-      // 3. Get signed URL and upload
-      const { signed_url, storage_path, token } = await getSignedUploadUrl(targetMeetingId, filename, mimeType);
-      await uploadAudioToStorage(signed_url, token, blob, mimeType);
+        // 3. Save meeting_audio row
+        const audioDuration = activeTab === "record" ? duration : undefined;
+        await saveMeetingAudio(targetMeetingId, storage_path, mimeType, audioDuration);
 
-      // 4. Save meeting_audio row
-      const audioDuration = activeTab === "record" ? duration : undefined;
-      await saveMeetingAudio(targetMeetingId, storage_path, mimeType, audioDuration);
+        // 4. Only NOW mark as uploaded (after audio is confirmed saved)
+        const { error: updateError } = await supabase
+          .from("meetings")
+          .update({ status: "uploaded" })
+          .eq("id", targetMeetingId);
+        if (updateError) throw updateError;
+      } catch (uploadErr) {
+        // Cleanup: delete orphan meeting if we just created it
+        if (createdNewMeeting && targetMeetingId) {
+          try { await supabase.from("meetings").delete().eq("id", targetMeetingId); } catch { /* best effort */ }
+        }
+        throw uploadErr;
+      }
 
       toast({ title: "Reunión guardada", description: "Audio subido correctamente." });
       onComplete(targetMeetingId);
