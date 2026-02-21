@@ -98,6 +98,7 @@ export type Database = {
       }
       meeting_analyses: {
         Row: {
+          agent_runs: Json | null
           analysis_json: Json | null
           created_at: string
           created_by: string | null
@@ -107,6 +108,7 @@ export type Database = {
           version: number
         }
         Insert: {
+          agent_runs?: Json | null
           analysis_json?: Json | null
           created_at?: string
           created_by?: string | null
@@ -116,6 +118,7 @@ export type Database = {
           version?: number
         }
         Update: {
+          agent_runs?: Json | null
           analysis_json?: Json | null
           created_at?: string
           created_by?: string | null

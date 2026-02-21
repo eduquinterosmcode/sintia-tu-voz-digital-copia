@@ -380,11 +380,20 @@ Consolida los resultados en el JSON final según el schema de coordinador.`;
 
   const newVersion = (latestAnalysis?.version || 0) + 1;
 
+  // Build agent_runs for observability
+  const agentRuns = specialistResults.map((r) => ({
+    agent: r.agent,
+    role: "specialist",
+    output: r.output,
+  }));
+  agentRuns.push({ agent: coordinator.name, role: "coordinator", output: analysisJson });
+
   const { data: analysis, error: analysisError } = await supabase
     .from("meeting_analyses")
     .insert({
       meeting_id: meetingId, version: newVersion, sector_id: meeting.sector_id as string,
       analysis_json: analysisJson, created_by: user.id,
+      agent_runs: agentRuns,
     })
     .select("id").single();
 

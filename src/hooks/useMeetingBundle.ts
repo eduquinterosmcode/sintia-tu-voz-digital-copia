@@ -105,6 +105,7 @@ export interface MeetingBundle {
     id: string;
     version: number;
     analysis_json: AnalysisJson;
+    agent_runs: Array<{ agent: string; role: string; output: Record<string, unknown> }> | null;
     created_at: string;
   } | null;
   chat_messages: ChatMessage[];

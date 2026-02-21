@@ -17,6 +17,7 @@ import DecisionsTab from "@/features/analysis/DecisionsTab";
 import ActionItemsTab from "@/features/analysis/ActionItemsTab";
 import RisksTab from "@/features/analysis/RisksTab";
 import SuggestedResponsesTab from "@/features/analysis/SuggestedResponsesTab";
+import AgentRunsTab from "@/features/analysis/AgentRunsTab";
 import ChatTab from "@/features/chat/ChatTab";
 
 export default function MeetingDetail() {
@@ -212,6 +213,7 @@ export default function MeetingDetail() {
           <TabsTrigger value="actions" disabled={!analysisJson}>Acciones</TabsTrigger>
           <TabsTrigger value="risks" disabled={!analysisJson}>Riesgos</TabsTrigger>
           <TabsTrigger value="responses" disabled={!analysisJson}>Respuestas</TabsTrigger>
+          <TabsTrigger value="agents" disabled={!analysis?.agent_runs}>Agentes</TabsTrigger>
           <TabsTrigger value="chat" disabled={!hasTranscript}>Chat</TabsTrigger>
         </TabsList>
 
@@ -239,6 +241,9 @@ export default function MeetingDetail() {
         </TabsContent>
         <TabsContent value="responses">
           <SuggestedResponsesTab analysis={analysisJson} speakerMap={speakerMap} />
+        </TabsContent>
+        <TabsContent value="agents">
+          <AgentRunsTab agentRuns={analysis?.agent_runs || null} />
         </TabsContent>
         <TabsContent value="chat">
           <ChatTab meetingId={meeting.id} initialMessages={chat_messages} speakerMap={speakerMap} />
