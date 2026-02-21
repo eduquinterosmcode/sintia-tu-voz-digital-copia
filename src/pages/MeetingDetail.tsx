@@ -35,6 +35,13 @@ export default function MeetingDetail() {
     if (!id) return;
     setAnalyzing(true);
     try {
+      // If not yet transcribed, run STT first
+      const needsTranscription = meeting.status === "uploaded" || (!hasTranscript && meeting.status !== "transcribed" && meeting.status !== "analyzed");
+      if (needsTranscription) {
+        toast({ title: "Transcribiendo audio...", description: "Paso 1 de 2: convirtiendo audio a texto." });
+        await transcribeMeeting(id);
+      }
+      toast({ title: "Analizando...", description: needsTranscription ? "Paso 2 de 2: analizando transcripción." : "Procesando transcripción." });
       await analyzeMeeting(id);
       toast({ title: "Análisis completado", description: "Los resultados están listos." });
       refetch();
