@@ -1,0 +1,1 @@
+ALTER TABLE public.meeting_analyses ADD COLUMN agent_runs jsonb DEFAULT NULL;
