@@ -5,7 +5,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { supabase } from "@/integrations/supabase/client";
 import { createMeeting, transcribeMeeting, analyzeMeeting, chatWithMeeting } from "@/services/apiClient";
-import { useOrganization } from "@/hooks/useOrganization";
+import { useOrganization } from "@/contexts/OrgContext";
 import { Loader2, Bug, ChevronDown, ChevronUp, Activity } from "lucide-react";
 
 interface LogEntry {
