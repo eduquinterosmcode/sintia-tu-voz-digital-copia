@@ -150,23 +150,48 @@ async function getAllSegments(
 
 const WINDOW_SIZE = 60;
 const WINDOW_OVERLAP = 5;
+const STEP = WINDOW_SIZE - WINDOW_OVERLAP;
+
+// Si la última ventana quedaría demasiado pequeña, intentamos absorberla
+// extendiendo la ventana anterior solo un poco.
+const MIN_FINAL_WINDOW = Math.max(10, Math.floor(WINDOW_SIZE * 0.25)); // 15
+const MAX_EXTENDED_WINDOW = WINDOW_SIZE + WINDOW_OVERLAP; // 65
 
 function chunkSegments(segments: Segment[]): Segment[][] {
+  if (segments.length === 0) return [];
   if (segments.length <= WINDOW_SIZE) return [segments];
 
+  if (STEP <= 0) {
+    throw new Error("WINDOW_OVERLAP debe ser menor que WINDOW_SIZE");
+  }
+
   const windows: Segment[][] = [];
-  let start = 0;
-  while (start < segments.length) {
+  const windowStarts: number[] = [];
+
+  for (let start = 0; start < segments.length; start += STEP) {
+    const remaining = segments.length - start;
     const end = Math.min(start + WINDOW_SIZE, segments.length);
+
+    // Si el tramo final sería demasiado pequeño, intentamos absorberlo
+    // extendiendo la ventana anterior de forma controlada.
+    if (remaining < MIN_FINAL_WINDOW && windows.length > 0) {
+      const prevStart = windowStarts[windowStarts.length - 1];
+      const extendedPrev = segments.slice(prevStart, segments.length);
+
+      if (extendedPrev.length <= MAX_EXTENDED_WINDOW) {
+        windows[windows.length - 1] = extendedPrev;
+        break;
+      }
+    }
+
     windows.push(segments.slice(start, end));
-    start = end - WINDOW_OVERLAP;
-    if (start >= segments.length) break;
-    // Avoid tiny trailing windows
-    if (segments.length - start < WINDOW_OVERLAP * 2) {
-      windows[windows.length - 1] = segments.slice(windows[windows.length - 1][0].segment_index === segments[0].segment_index ? 0 : start - (WINDOW_SIZE - WINDOW_OVERLAP), segments.length);
+    windowStarts.push(start);
+
+    if (end === segments.length) {
       break;
     }
   }
+
   return windows;
 }
 
