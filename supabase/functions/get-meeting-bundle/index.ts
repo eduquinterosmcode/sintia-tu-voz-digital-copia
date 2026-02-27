@@ -63,13 +63,25 @@ Deno.serve(async (req) => {
       });
     }
 
-    const [speakersRes, transcriptRes, segmentsRes, analysisRes, chatRes, audioRes] =
+    // First, get latest transcript to scope segments correctly
+    const transcriptRes = await supabase
+      .from("meeting_transcripts").select("*").eq("meeting_id", meetingId)
+      .order("version", { ascending: false }).limit(1).single();
+
+    const latestTranscriptId = transcriptRes.data?.id;
+
+    // Build segments query scoped to latest transcript
+    const segmentsQuery = supabase
+      .from("meeting_segments").select("*").eq("meeting_id", meetingId);
+    if (latestTranscriptId) {
+      segmentsQuery.eq("transcript_id", latestTranscriptId);
+    }
+    segmentsQuery.order("t_start_sec").range(segmentPage * segmentLimit, (segmentPage + 1) * segmentLimit - 1);
+
+    const [speakersRes, segmentsRes, analysisRes, chatRes, audioRes] =
       await Promise.all([
         supabase.from("meeting_speakers").select("*").eq("meeting_id", meetingId),
-        supabase.from("meeting_transcripts").select("*").eq("meeting_id", meetingId)
-          .order("version", { ascending: false }).limit(1).single(),
-        supabase.from("meeting_segments").select("*").eq("meeting_id", meetingId)
-          .order("t_start_sec").range(segmentPage * segmentLimit, (segmentPage + 1) * segmentLimit - 1),
+        segmentsQuery,
         supabase.from("meeting_analyses").select("*").eq("meeting_id", meetingId)
           .order("version", { ascending: false }).limit(1).single(),
         supabase.from("chat_messages").select("*").eq("meeting_id", meetingId)
