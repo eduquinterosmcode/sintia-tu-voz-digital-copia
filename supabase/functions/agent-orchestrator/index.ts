@@ -113,6 +113,63 @@ async function getRelevantSegments(
   return data || [];
 }
 
+// ── All Segments (for Map-Reduce) ───────────────────────────────────────
+
+async function getAllSegments(
+  supabase: ReturnType<typeof createClient>,
+  meetingId: string
+): Promise<Segment[]> {
+  const transcriptId = await getLatestTranscriptId(supabase, meetingId);
+  if (!transcriptId) return [];
+
+  const allSegments: Segment[] = [];
+  const pageSize = 1000;
+  let offset = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const { data } = await supabase
+      .from("meeting_segments")
+      .select("id, segment_index, speaker_label, speaker_name, t_start_sec, t_end_sec, text")
+      .eq("meeting_id", meetingId)
+      .eq("transcript_id", transcriptId)
+      .order("t_start_sec")
+      .range(offset, offset + pageSize - 1);
+
+    if (data && data.length > 0) {
+      allSegments.push(...data);
+      offset += pageSize;
+      hasMore = data.length === pageSize;
+    } else {
+      hasMore = false;
+    }
+  }
+
+  return allSegments;
+}
+
+const WINDOW_SIZE = 60;
+const WINDOW_OVERLAP = 5;
+
+function chunkSegments(segments: Segment[]): Segment[][] {
+  if (segments.length <= WINDOW_SIZE) return [segments];
+
+  const windows: Segment[][] = [];
+  let start = 0;
+  while (start < segments.length) {
+    const end = Math.min(start + WINDOW_SIZE, segments.length);
+    windows.push(segments.slice(start, end));
+    start = end - WINDOW_OVERLAP;
+    if (start >= segments.length) break;
+    // Avoid tiny trailing windows
+    if (segments.length - start < WINDOW_OVERLAP * 2) {
+      windows[windows.length - 1] = segments.slice(windows[windows.length - 1][0].segment_index === segments[0].segment_index ? 0 : start - (WINDOW_SIZE - WINDOW_OVERLAP), segments.length);
+      break;
+    }
+  }
+  return windows;
+}
+
 function formatSegmentsForPrompt(segments: Segment[], speakerMap: Record<string, string>): string {
   return segments
     .map((s) => {
@@ -339,40 +396,82 @@ async function handleAnalyze(p: AnalyzeParams): Promise<Response> {
     });
   }
 
-  const segments = await getRelevantSegments(supabase, meetingId);
-  const transcriptText = formatSegmentsForPrompt(segments, speakerMap);
+  const allSegments = await getAllSegments(supabase, meetingId);
 
-  if (segments.length === 0) {
+  if (allSegments.length === 0) {
     return new Response(
       JSON.stringify({ error: "No hay segmentos de transcripción disponibles. Primero transcribe el audio." }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 
-  // Run specialists in parallel
-  const specialistPromises = specialists.map(async (spec) => {
-    const systemPrompt = buildAgentSystemPrompt(spec);
-    const userContent = `Sector: ${sector?.name || "General"}
-Reunión: ${meeting.title}
+  const windows = chunkSegments(allSegments);
+  const isMapReduce = windows.length > 1;
+  console.log(`Analysis mode: ${isMapReduce ? "map-reduce" : "single-pass"}, segments: ${allSegments.length}, windows: ${windows.length}`);
+
+  // ── MAP PHASE: run specialists on each window ──
+  const windowResults: Array<{ windowIndex: number; specialistResults: Array<{ agent: string; output: Record<string, unknown> }> }> = [];
+
+  for (let wi = 0; wi < windows.length; wi++) {
+    const windowSegments = windows[wi];
+    const windowText = formatSegmentsForPrompt(windowSegments, speakerMap);
+    const windowLabel = isMapReduce
+      ? ` (ventana ${wi + 1}/${windows.length}, segmentos ${windowSegments[0].segment_index}-${windowSegments[windowSegments.length - 1].segment_index})`
+      : "";
+
+    const specialistPromises = specialists.map(async (spec) => {
+      const systemPrompt = buildAgentSystemPrompt(spec);
+      const userContent = `Sector: ${sector?.name || "General"}
+Reunión: ${meeting.title}${windowLabel}
 ${(meeting.notes as string) ? `Notas: ${meeting.notes}` : ""}
 
 TRANSCRIPCIÓN DIARIZADA:
-${transcriptText}
+${windowText}
 
 Tu foco: ${spec.name}
 Produce tu análisis en JSON según el schema proporcionado.`;
 
-    const result = await callLLMWithRetry(openaiKey, llmModel, temperature, maxTokens, systemPrompt, userContent);
-    totalInputTokens += result.usage.input_tokens;
-    totalOutputTokens += result.usage.output_tokens;
-    return { agent: spec.name, output: result.parsed };
-  });
+      const result = await callLLMWithRetry(openaiKey, llmModel, temperature, maxTokens, systemPrompt, userContent);
+      totalInputTokens += result.usage.input_tokens;
+      totalOutputTokens += result.usage.output_tokens;
+      return { agent: spec.name, output: result.parsed };
+    });
 
-  const specialistResults = await Promise.all(specialistPromises);
+    const results = await Promise.all(specialistPromises);
+    windowResults.push({ windowIndex: wi, specialistResults: results });
+  }
 
-  // Coordinator consolidation
+  // ── REDUCE PHASE: coordinator consolidates all windows ──
   const coordSystemPrompt = buildAgentSystemPrompt(coordinator);
-  const consolidationContent = `Sector: ${sector?.name || "General"}
+
+  let consolidationContent: string;
+  if (isMapReduce) {
+    // Multi-window: present all window results grouped
+    const windowSummaries = windowResults.map((wr) => {
+      const windowSegments = windows[wr.windowIndex];
+      const timeRange = `${formatTime(windowSegments[0].t_start_sec)} - ${formatTime(windowSegments[windowSegments.length - 1].t_end_sec)}`;
+      const specialistTexts = wr.specialistResults
+        .map((r) => `  --- ${r.agent} ---\n${JSON.stringify(r.output, null, 2)}`)
+        .join("\n\n");
+      return `=== VENTANA ${wr.windowIndex + 1}/${windows.length} [${timeRange}] ===\n${specialistTexts}`;
+    }).join("\n\n");
+
+    consolidationContent = `Sector: ${sector?.name || "General"}
+Reunión: ${meeting.title}
+${(meeting.notes as string) ? `Notas: ${meeting.notes}` : ""}
+
+IMPORTANTE: Esta reunión tiene ${allSegments.length} segmentos divididos en ${windows.length} ventanas temporales.
+Cada ventana fue analizada por especialistas de forma independiente.
+Debes CONSOLIDAR y DEDUPLICAR los resultados, fusionando hallazgos repetidos entre ventanas y manteniendo la cobertura completa.
+
+RESULTADOS POR VENTANA:
+${windowSummaries}
+
+Consolida TODOS los resultados en el JSON final según el schema de coordinador. Elimina duplicados, fusiona evidencia complementaria.`;
+  } else {
+    // Single window: same as before
+    const transcriptText = formatSegmentsForPrompt(allSegments, speakerMap);
+    consolidationContent = `Sector: ${sector?.name || "General"}
 Reunión: ${meeting.title}
 ${(meeting.notes as string) ? `Notas: ${meeting.notes}` : ""}
 
@@ -380,17 +479,20 @@ TRANSCRIPCIÓN DIARIZADA:
 ${transcriptText}
 
 RESULTADOS DE ESPECIALISTAS:
-${specialistResults.map((r) => `--- ${r.agent} ---\n${JSON.stringify(r.output, null, 2)}`).join("\n\n")}
+${windowResults[0].specialistResults.map((r) => `--- ${r.agent} ---\n${JSON.stringify(r.output, null, 2)}`).join("\n\n")}
 
 Consolida los resultados en el JSON final según el schema de coordinador.`;
+  }
 
-  const coordResult = await callLLMWithRetry(openaiKey, llmModel, temperature, maxTokens * 3, coordSystemPrompt, consolidationContent);
+  // Give coordinator more tokens for map-reduce (more data to consolidate)
+  const coordMaxTokens = isMapReduce ? maxTokens * 4 : maxTokens * 3;
+  const coordResult = await callLLMWithRetry(openaiKey, llmModel, temperature, coordMaxTokens, coordSystemPrompt, consolidationContent);
   totalInputTokens += coordResult.usage.input_tokens;
   totalOutputTokens += coordResult.usage.output_tokens;
 
   const analysisJson = coordResult.parsed;
   console.log("Coordinator result keys:", Object.keys(analysisJson));
-  console.log("Coordinator result preview:", JSON.stringify(analysisJson).substring(0, 500));
+  console.log(`Total tokens: input=${totalInputTokens}, output=${totalOutputTokens}, windows=${windows.length}`);
 
   // Save analysis
   const { data: latestAnalysis } = await supabase
@@ -399,12 +501,18 @@ Consolida los resultados en el JSON final según el schema de coordinador.`;
 
   const newVersion = (latestAnalysis?.version || 0) + 1;
 
-  // Build agent_runs for observability
-  const agentRuns = specialistResults.map((r) => ({
-    agent: r.agent,
-    role: "specialist",
-    output: r.output,
-  }));
+  // Build agent_runs for observability (flatten all windows)
+  const agentRuns: Array<{ agent: string; role: string; output: Record<string, unknown>; window?: number }> = [];
+  for (const wr of windowResults) {
+    for (const sr of wr.specialistResults) {
+      agentRuns.push({
+        agent: sr.agent,
+        role: "specialist",
+        output: sr.output,
+        ...(isMapReduce ? { window: wr.windowIndex + 1 } : {}),
+      });
+    }
+  }
   agentRuns.push({ agent: coordinator.name, role: "coordinator", output: analysisJson });
 
   const { data: analysis, error: analysisError } = await supabase
@@ -424,8 +532,9 @@ Consolida los resultados en el JSON final según el schema de coordinador.`;
   await supabase.from("usage_events").insert({
     org_id: meeting.org_id as string, meeting_id: meetingId,
     kind: "llm", provider: "openai", model: llmModel,
-    units: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens },
+    units: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, windows: windows.length },
     cost_estimate_usd: null,
+    meta: { strategy: isMapReduce ? "map-reduce" : "single-pass", segment_count: allSegments.length, window_count: windows.length },
   });
 
   return new Response(
