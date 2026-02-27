@@ -60,12 +60,29 @@ async function verifyAuth(supabaseUrl: string, serviceKey: string, authHeader: s
 
 // ── Segments ────────────────────────────────────────────────────────────
 
+async function getLatestTranscriptId(
+  supabase: ReturnType<typeof createClient>,
+  meetingId: string
+): Promise<string | null> {
+  const { data } = await supabase
+    .from("meeting_transcripts")
+    .select("id")
+    .eq("meeting_id", meetingId)
+    .order("version", { ascending: false })
+    .limit(1)
+    .single();
+  return data?.id || null;
+}
+
 async function getRelevantSegments(
   supabase: ReturnType<typeof createClient>,
   meetingId: string,
   query?: string,
   limit = 60
 ): Promise<Segment[]> {
+  const transcriptId = await getLatestTranscriptId(supabase, meetingId);
+  if (!transcriptId) return [];
+
   if (query) {
     const tsQuery = query
       .split(/\s+/)
@@ -77,6 +94,7 @@ async function getRelevantSegments(
       .from("meeting_segments")
       .select("id, segment_index, speaker_label, speaker_name, t_start_sec, t_end_sec, text")
       .eq("meeting_id", meetingId)
+      .eq("transcript_id", transcriptId)
       .textSearch("text_search", tsQuery, { config: "spanish" })
       .order("t_start_sec")
       .limit(limit);
@@ -88,6 +106,7 @@ async function getRelevantSegments(
     .from("meeting_segments")
     .select("id, segment_index, speaker_label, speaker_name, t_start_sec, t_end_sec, text")
     .eq("meeting_id", meetingId)
+    .eq("transcript_id", transcriptId)
     .order("t_start_sec")
     .limit(limit);
 
