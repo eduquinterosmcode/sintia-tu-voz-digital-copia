@@ -9,7 +9,7 @@ import { Mic, Square, Pause, Play, Upload, Loader2, RotateCcw, Save, AlertTriang
 import { getSignedUploadUrl, uploadAudioToStorage, saveMeetingAudio, createMeeting } from "@/services/apiClient";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { useOrganization } from "@/hooks/useOrganization";
+import { useOrganization } from "@/contexts/OrgContext";
 
 type RecordingState = "idle" | "recording" | "paused" | "stopped";
 
