@@ -6,6 +6,7 @@ interface AgentRun {
   agent: string;
   role: string;
   output: Record<string, unknown>;
+  window?: number;
 }
 
 interface AgentRunsTabProps {
@@ -62,6 +63,11 @@ function AgentCard({ run, index }: { run: AgentRun; index: number }) {
         <Badge variant={isCoordinator ? "default" : "secondary"} className="text-xs">
           {isCoordinator ? "Coordinador" : `Especialista #${index + 1}`}
         </Badge>
+        {run.window && (
+          <Badge variant="outline" className="text-xs">
+            Ventana {run.window}
+          </Badge>
+        )}
       </div>
 
       {outputEntries.length > 0 ? (
@@ -94,13 +100,18 @@ export default function AgentRunsTab({ agentRuns }: AgentRunsTabProps) {
 
   const specialists = agentRuns.filter((r) => r.role === "specialist");
   const coordinator = agentRuns.find((r) => r.role === "coordinator");
+  const windowCount = Math.max(...specialists.map((s) => s.window || 1), 1);
+  const isMapReduce = windowCount > 1;
 
   return (
     <div className="space-y-6">
       <div>
         <h3 className="font-display font-semibold text-foreground mb-1">Pipeline Multi-Agente</h3>
         <p className="text-xs text-muted-foreground">
-          {specialists.length} especialista{specialists.length !== 1 ? "s" : ""} ejecutado{specialists.length !== 1 ? "s" : ""} en paralelo → 1 coordinador consolidó el resultado final.
+          {isMapReduce
+            ? `${specialists.length} ejecuciones de especialistas en ${windowCount} ventanas (Map-Reduce) → 1 coordinador consolidó y deduplicó el resultado final.`
+            : `${specialists.length} especialista${specialists.length !== 1 ? "s" : ""} ejecutado${specialists.length !== 1 ? "s" : ""} en paralelo → 1 coordinador consolidó el resultado final.`
+          }
         </p>
       </div>
 
