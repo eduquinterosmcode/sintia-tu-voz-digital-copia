@@ -5,19 +5,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Frontend
+# Frontend (apps/web — actualmente en raíz del repo)
 npm run dev          # dev server (Vite)
 npm run build        # production build
 npm run lint         # ESLint
 npx tsc --noEmit     # type-check without emitting
 
-# Tests (vitest — minimal coverage currently)
+# Tests frontend (vitest — cobertura mínima)
 npm test             # run once
 npm run test:watch   # watch mode
 
 # Supabase CLI (must be linked: npx supabase link --project-ref bpzcogoixzxlzaaijdcr)
 npx supabase functions deploy <name> --project-ref bpzcogoixzxlzaaijdcr
 npx supabase db push   # apply pending migrations to remote
+
+# AI Service (apps/ai-service/) — requiere Python 3.11+ y uv
+cd apps/ai-service
+uv sync                                          # instalar dependencias
+uv run uvicorn ai_service.main:app --reload      # dev server (port 8000)
+uv run pytest                                    # tests
+# Migración manual de ai_jobs (una sola vez):
+psql $DATABASE_URL -f migrations/001_create_jobs_table.sql
 ```
 
 Supabase project ref: `bpzcogoixzxlzaaijdcr`
@@ -105,24 +113,64 @@ All Edge Function calls go through `invokeFunction()` which wraps `supabase.func
 ## Roadmap arquitectónico
 
 ### Estructura objetivo: monorepo
-El repositorio evolucionará a la siguiente estructura. `apps/web/` y `apps/supabase/` corresponden al código actual; `apps/ai-service/` aún no existe.
+El repositorio evolucionará a la siguiente estructura. `apps/web/` y `apps/supabase/` corresponden al código actual; `apps/ai-service/` fue creado en la Fase 1.
 
 ```
 /
 ├── apps/
 │   ├── web/          # frontend React actual (src/, index.html, vite.config.ts, etc.)
 │   ├── supabase/     # migraciones y Edge Functions actuales (supabase/)
-│   └── ai-service/   # nuevo microservicio Python (no existe aún)
+│   └── ai-service/   # microservicio Python — Fase 1 completa
 ```
 
-No mover archivos hasta que se decida iniciar la migración a monorepo formalmente.
+No mover `apps/web/` ni `apps/supabase/` hasta que se decida iniciar la migración a monorepo formalmente.
 
-### Microservicio Python (`apps/ai-service/`)
-Toda la lógica de agentes migrará a un microservicio Python independiente con:
-- **FastAPI** — framework REST
-- **OpenAI Agents SDK** — orquestación de agentes
-- **asyncpg + SQLAlchemy async** — conexión directa a PostgreSQL de Supabase
-- **Pydantic** — contratos de datos estructurados
+### Microservicio Python (`apps/ai-service/`) — Fase 1 completa
+
+**Stack:** FastAPI + OpenAI Agents SDK (`openai-agents`) + SQLAlchemy async + asyncpg + Pydantic v2 + pydantic-settings. Empaquetado con `uv` (pyproject.toml), contenedor Docker multi-stage.
+
+**Estructura:**
+```
+apps/ai-service/
+├── src/ai_service/
+│   ├── main.py          # FastAPI app, lifespan arranca/detiene el worker
+│   ├── config.py        # pydantic-settings, valida DATABASE_URL en startup
+│   ├── database.py      # AsyncEngine + AsyncSessionLocal + get_db()
+│   ├── jobs/
+│   │   ├── models.py    # JobStatus (StrEnum), JobCreate, JobRow
+│   │   ├── repository.py # enqueue / claim_next / mark_completed / mark_failed
+│   │   └── worker.py    # polling loop + asyncio.Semaphore
+│   ├── handlers/
+│   │   └── registry.py  # @register_handler("tipo") — punto de extensión
+│   └── api/
+│       ├── health.py    # GET /health, GET /health/db (sin auth)
+│       └── router.py    # POST /jobs/, GET /jobs/{id} (SERVICE_API_KEY)
+├── migrations/
+│   └── 001_create_jobs_table.sql
+└── tests/
+    └── test_health.py
+```
+
+**Job queue durable (`ai_jobs` tabla en Postgres):**
+- `SELECT FOR UPDATE SKIP LOCKED` — múltiples réplicas sin double-processing
+- `ON CONFLICT (idempotency_key) DO NOTHING` — enqueue idempotente
+- Backoff exponencial en retry: `run_at = NOW() + 2^attempts minutes`
+- Status machine: `pending → running → completed | failed → dead`
+- `max_attempts` configurable por job (default 3)
+
+**Handler registry:**
+```python
+from ai_service.handlers.registry import register_handler
+
+@register_handler("analyze_meeting")
+async def handle(job: JobRow) -> None:
+    ...  # implementar aquí; el worker lo llama automáticamente
+```
+Registrar un nuevo tipo de job = una función decorada. Sin cambios al worker ni al router.
+
+**Auth:** `SERVICE_API_KEY` estático (bearer token) en todos los endpoints excepto `/health`. Supabase JWT se agrega cuando el servicio sea llamado externamente.
+
+**Variables de entorno requeridas:** `DATABASE_URL` (asyncpg DSN), `OPENAI_API_KEY`, `SERVICE_API_KEY`. Ver `.env.example`.
 
 ### Integración con Supabase
 El flujo de activación del análisis será:
@@ -135,7 +183,7 @@ La Edge Function `agent-orchestrator` actúa como proxy durante la transición; 
 La migración del orquestador Deno → Python será gradual. El Deno actual sigue funcionando. Nuevas capacidades se implementan en Python primero; el Deno existente no se toca hasta que el Python sea equivalente y estable.
 
 ### Agente crítico independiente
-Se agregará un agente que no existe hoy (definición pendiente). Será implementado directamente en el microservicio Python, no en el orquestador Deno.
+Pendiente de definición — será implementado directamente en `apps/ai-service/`, no en el orquestador Deno. Ver discusión en próxima sesión.
 
 ### Dominios profesionales configurables por DB
 Los sectores soportarán **activation rules** por especialista, configuradas desde la DB (sin cambios de código para agregar un dominio nuevo). El schema exacto de `activation_rules` en `agent_profiles` está pendiente de diseño.
