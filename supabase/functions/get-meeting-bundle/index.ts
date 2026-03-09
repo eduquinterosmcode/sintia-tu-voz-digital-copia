@@ -46,7 +46,7 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, serviceKey);
 
     const { data: meeting } = await supabase
-      .from("meetings").select("*, sectors(key, name)").eq("id", meetingId).single();
+      .from("meetings").select("*, sectors(key, name, view_config_json)").eq("id", meetingId).single();
 
     if (!meeting) {
       return new Response(JSON.stringify({ error: "Reunión no encontrada" }), {

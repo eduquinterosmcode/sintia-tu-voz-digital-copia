@@ -1,56 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { getMeetingBundle } from "@/services/apiClient";
+import type { SectorViewConfig } from "@/features/analysis/viewConfig.types";
 
 export interface Evidence {
   speaker: string;
   t_start_sec: number;
   t_end_sec: number;
   quote: string;
-}
-
-export interface KeyPoint {
-  point: string;
-  evidence: Evidence[];
-}
-
-export interface Decision {
-  decision: string;
-  owner: string | null;
-  evidence: Evidence[];
-}
-
-export interface ActionItem {
-  task: string;
-  owner: string | null;
-  due_date: string | null;
-  priority: "low" | "medium" | "high";
-  evidence: Evidence[];
-}
-
-export interface RiskAlert {
-  risk: string;
-  severity: "low" | "medium" | "high";
-  mitigation: string;
-  evidence: Evidence[];
-}
-
-export interface SuggestedResponse {
-  context: string;
-  message: string;
-  evidence: Evidence[];
-}
-
-export interface AnalysisJson {
-  sector: string;
-  meeting_title: string;
-  summary: string;
-  key_points: KeyPoint[];
-  decisions: Decision[];
-  action_items: ActionItem[];
-  risks_alerts: RiskAlert[];
-  open_questions: string[];
-  suggested_responses: SuggestedResponse[];
-  confidence_notes: string[];
 }
 
 export interface Segment {
@@ -90,7 +46,7 @@ export interface MeetingBundle {
     notes: string | null;
     created_at: string;
     sector_id: string;
-    sectors: { key: string; name: string } | null;
+    sectors: { key: string; name: string; view_config_json: SectorViewConfig | null } | null;
   };
   speakers: Speaker[];
   transcript: {
@@ -104,7 +60,7 @@ export interface MeetingBundle {
   analysis: {
     id: string;
     version: number;
-    analysis_json: AnalysisJson;
+    analysis_json: Record<string, unknown>;
     agent_runs: Array<{ agent: string; role: string; output: Record<string, unknown> }> | null;
     created_at: string;
   } | null;

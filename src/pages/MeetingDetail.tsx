@@ -3,7 +3,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ArrowLeft, Loader2, Play, RefreshCw, ChevronDown, FileText, RotateCcw } from "lucide-react";
-import { useMeetingBundle, AnalysisJson } from "@/hooks/useMeetingBundle";
+import { useMeetingBundle } from "@/hooks/useMeetingBundle";
 import { useQueryClient } from "@tanstack/react-query";
 import { analyzeMeeting, transcribeMeeting } from "@/services/apiClient";
 import { useToast } from "@/hooks/use-toast";
@@ -12,11 +12,7 @@ import StatusBadge from "@/components/StatusBadge";
 import AudioRecorder from "@/components/AudioRecorder";
 import AudioPlayer from "@/components/AudioPlayer";
 import TranscriptTab from "@/features/transcript/TranscriptTab";
-import AnalysisSummaryTab from "@/features/analysis/AnalysisSummaryTab";
-import DecisionsTab from "@/features/analysis/DecisionsTab";
-import ActionItemsTab from "@/features/analysis/ActionItemsTab";
-import RisksTab from "@/features/analysis/RisksTab";
-import SuggestedResponsesTab from "@/features/analysis/SuggestedResponsesTab";
+import { AnalysisTabContent, ICONS } from "@/features/analysis/DynamicAnalysisView";
 import AgentRunsTab from "@/features/analysis/AgentRunsTab";
 import ChatTab from "@/features/chat/ChatTab";
 
@@ -98,7 +94,8 @@ export default function MeetingDetail() {
   }
 
   const { meeting, speakers, segments, analysis, chat_messages, audio, transcript } = bundle;
-  const analysisJson = analysis?.analysis_json as AnalysisJson | null;
+  const analysisJson = (analysis?.analysis_json ?? null) as Record<string, unknown> | null;
+  const viewConfig = meeting.sectors?.view_config_json ?? null;
 
   // Build speaker map
   const speakerMap: Record<string, string> = {};
@@ -208,11 +205,15 @@ export default function MeetingDetail() {
       <Tabs defaultValue="transcript">
         <TabsList className="mb-4 flex-wrap h-auto gap-1">
           <TabsTrigger value="transcript">Transcripción</TabsTrigger>
-          <TabsTrigger value="analysis" disabled={!analysisJson}>Resumen</TabsTrigger>
-          <TabsTrigger value="decisions" disabled={!analysisJson}>Decisiones</TabsTrigger>
-          <TabsTrigger value="actions" disabled={!analysisJson}>Acciones</TabsTrigger>
-          <TabsTrigger value="risks" disabled={!analysisJson}>Riesgos</TabsTrigger>
-          <TabsTrigger value="responses" disabled={!analysisJson}>Respuestas</TabsTrigger>
+          {viewConfig?.tabs.map((tab) => {
+            const Icon = ICONS[tab.icon];
+            return (
+              <TabsTrigger key={tab.key} value={tab.key} disabled={!analysisJson} className="gap-1.5">
+                {Icon && <Icon className="h-3.5 w-3.5" />}
+                {tab.label}
+              </TabsTrigger>
+            );
+          })}
           <TabsTrigger value="agents" disabled={!analysis?.agent_runs}>Agentes</TabsTrigger>
           <TabsTrigger value="chat" disabled={!hasTranscript}>Chat</TabsTrigger>
         </TabsList>
@@ -227,21 +228,21 @@ export default function MeetingDetail() {
             onRefresh={handleRefresh}
           />
         </TabsContent>
-        <TabsContent value="analysis">
-          <AnalysisSummaryTab analysis={analysisJson} speakerMap={speakerMap} />
-        </TabsContent>
-        <TabsContent value="decisions">
-          <DecisionsTab analysis={analysisJson} speakerMap={speakerMap} />
-        </TabsContent>
-        <TabsContent value="actions">
-          <ActionItemsTab analysis={analysisJson} speakerMap={speakerMap} />
-        </TabsContent>
-        <TabsContent value="risks">
-          <RisksTab analysis={analysisJson} speakerMap={speakerMap} />
-        </TabsContent>
-        <TabsContent value="responses">
-          <SuggestedResponsesTab analysis={analysisJson} speakerMap={speakerMap} />
-        </TabsContent>
+        {viewConfig?.tabs.map((tab) => (
+          <TabsContent key={tab.key} value={tab.key}>
+            {analysisJson ? (
+              <AnalysisTabContent
+                sections={tab.sections}
+                analysisJson={analysisJson}
+                speakerMap={speakerMap}
+              />
+            ) : (
+              <div className="flex items-center justify-center py-16 text-muted-foreground text-sm">
+                No hay análisis disponible. Ejecuta el análisis desde el botón superior.
+              </div>
+            )}
+          </TabsContent>
+        ))}
         <TabsContent value="agents">
           <AgentRunsTab agentRuns={analysis?.agent_runs || null} />
         </TabsContent>

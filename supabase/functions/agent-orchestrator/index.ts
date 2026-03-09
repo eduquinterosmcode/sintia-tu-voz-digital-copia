@@ -459,6 +459,15 @@ Produce tu análisis en JSON según el schema proporcionado.`;
       const result = await callLLMWithRetry(openaiKey, llmModel, temperature, maxTokens, systemPrompt, userContent);
       totalInputTokens += result.usage.input_tokens;
       totalOutputTokens += result.usage.output_tokens;
+
+      // ── LOGGING DIAGNÓSTICO (nuevo) ──
+      const outputKeys = Object.keys(result.parsed);
+      console.log(`Specialist "${spec.name}" output keys: [${outputKeys.join(", ")}], key count: ${outputKeys.length}`);
+      if (outputKeys.length === 0) {
+        console.warn(`Specialist "${spec.name}" returned EMPTY output. Raw content length: ${JSON.stringify(result.parsed).length}`);
+      }
+      // ── FIN LOGGING ──
+
       return { agent: spec.name, output: result.parsed };
     });
 
@@ -530,6 +539,10 @@ Consolida los resultados en el JSON final según el schema de coordinador.`;
   const agentRuns: Array<{ agent: string; role: string; output: Record<string, unknown>; window?: number }> = [];
   for (const wr of windowResults) {
     for (const sr of wr.specialistResults) {
+      // ── LOGGING DIAGNÓSTICO (nuevo) ──
+      const outputKeyCount = Object.keys(sr.output || {}).length;
+      console.log(`Persisting specialist "${sr.agent}" with ${outputKeyCount} output keys`);
+      // ── FIN LOGGING ──
       agentRuns.push({
         agent: sr.agent,
         role: "specialist",
@@ -539,6 +552,9 @@ Consolida los resultados en el JSON final según el schema de coordinador.`;
     }
   }
   agentRuns.push({ agent: coordinator.name, role: "coordinator", output: analysisJson });
+  // ── LOGGING DIAGNÓSTICO (nuevo) ──
+  console.log(`Total agent_runs to persist: ${agentRuns.length}, JSON size: ${JSON.stringify(agentRuns).length} bytes`);
+  // ── FIN LOGGING ──
 
   const { data: analysis, error: analysisError } = await supabase
     .from("meeting_analyses")
