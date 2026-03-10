@@ -232,15 +232,36 @@ GET  /audit/{meeting_id}              → fetch reporte final
 psql $DATABASE_URL -f apps/ai-service/migrations/002_create_meeting_quality_reports.sql
 ```
 
-### Integración con Supabase
-El flujo de activación del análisis será:
+### Fase 3 — Integración Deno → Python (completa, validada e2e)
+
+Flujo activo en producción:
 ```
-Database Webhook → Edge Function (proxy ligero) → Microservicio Python
+Frontend → agent-orchestrator (Deno)
+               ↓ análisis completado
+           INSERT INTO ai_jobs (job_type='audit_analysis')
+               ↓ worker polling cada 5s
+           Python worker (local / Cloud Run futuro)
+               ↓
+           meeting_quality_reports
 ```
-La Edge Function `agent-orchestrator` actúa como proxy durante la transición; eventualmente quedará solo como webhook receiver que delega al servicio Python.
+
+**Cambio en Deno** (`agent-orchestrator/index.ts`, función `handleAnalyze`):
+Después de `update({ status: "analyzed" })`, inserta en `ai_jobs` via `supabase.upsert()` con `ignoreDuplicates: true`. Fallo no-fatal: error loggeado pero la respuesta de análisis no se ve afectada.
+
+**Desacoplamiento via DB** (Strangler Fig): Deno escribe a `ai_jobs`, Python lee de `ai_jobs`. Sin HTTP directo entre servicios — el Python service ni siquiera necesita estar corriendo en el momento del análisis.
+
+**Validado e2e** (2026-03-10): job encolado → worker pick-up en <5s → agente corrió en ~15s → reporte guardado en `meeting_quality_reports`.
+
+**Siguiente integración (Fase futura):** cuando el servicio esté en Cloud Run, reemplazar el insert directo en `ai_jobs` por un Supabase Database Webhook → `POST /webhooks/analysis-completed`. El Deno quedaría como proxy liviano.
 
 ### Estrategia de migración: Strangler Fig
 La migración del orquestador Deno → Python será gradual. El Deno actual sigue funcionando. Nuevas capacidades se implementan en Python primero; el Deno existente no se toca hasta que el Python sea equivalente y estable.
 
-### Dominios profesionales configurables por DB
+### Fase 4 — Frontend del reporte de calidad (pendiente)
+Tab hardcodeado "Calidad" en `MeetingDetail.tsx`, visible cuando existe `meeting_quality_reports` para esa reunión. No usa `view_config_json` (es transversal a todos los sectores). Diseño pendiente.
+
+### Fase 5 — Dominios profesionales configurables por DB (pendiente)
 Los sectores soportarán **activation rules** por especialista, configuradas desde la DB (sin cambios de código para agregar un dominio nuevo). El schema exacto de `activation_rules` en `agent_profiles` está pendiente de diseño.
+
+### Fase 6 — Deploy en Cloud Run (pendiente)
+Dockerizar y desplegar `apps/ai-service/` en Cloud Run. El Dockerfile multi-stage ya existe. Variables de entorno via Secret Manager. Una vez desplegado, migrar trigger a Database Webhook (Opción A).
