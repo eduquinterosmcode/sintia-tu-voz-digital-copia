@@ -8,6 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_service.api.audit import router as audit_router
 from ai_service.api.health import router as health_router
 from ai_service.config import settings
 from ai_service.database import get_db
@@ -57,6 +58,12 @@ async def get_job(job_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
 # Root router
 # ------------------------------------------------------------------
 
+audit_router_protected = APIRouter(
+    dependencies=[Depends(require_api_key)],
+)
+audit_router_protected.include_router(audit_router)
+
 api_router = APIRouter()
-api_router.include_router(health_router)   # no auth
-api_router.include_router(jobs_router)     # auth required
+api_router.include_router(health_router)          # no auth
+api_router.include_router(jobs_router)            # auth required
+api_router.include_router(audit_router_protected) # auth required
