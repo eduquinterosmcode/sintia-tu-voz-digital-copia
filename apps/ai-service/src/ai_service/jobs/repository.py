@@ -44,7 +44,7 @@ class JobRepository:
                 INSERT INTO ai_jobs
                     (idempotency_key, job_type, payload, priority, max_attempts, run_at)
                 VALUES
-                    (:idempotency_key, :job_type, :payload::jsonb, :priority, :max_attempts, {run_at_expr})
+                    (:idempotency_key, :job_type, CAST(:payload AS jsonb), :priority, :max_attempts, {run_at_expr})
                 ON CONFLICT (idempotency_key) DO NOTHING
                 RETURNING *
             """),

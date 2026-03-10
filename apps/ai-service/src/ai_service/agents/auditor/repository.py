@@ -107,7 +107,7 @@ class AuditorRepository:
                 INSERT INTO meeting_quality_reports
                     (meeting_id, analysis_id, confidence_score, report_json)
                 VALUES
-                    (:meeting_id, :analysis_id, :score, :report_json::jsonb)
+                    (:meeting_id, :analysis_id, :score, CAST(:report_json AS jsonb))
                 ON CONFLICT (analysis_id) DO UPDATE SET
                     confidence_score = EXCLUDED.confidence_score,
                     report_json      = EXCLUDED.report_json,
