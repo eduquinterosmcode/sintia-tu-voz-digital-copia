@@ -296,5 +296,48 @@ Campo `activation_rules JSONB` en `agent_profiles`. Backward-compatible: `null` 
 
 **Para agregar un nuevo dominio sin código:** insertar filas en `sectors` + `agent_profiles` (con o sin `activation_rules`) — el orchestrator lo toma automáticamente.
 
-### Fase 6 — Deploy en Cloud Run (pendiente)
-Dockerizar y desplegar `apps/ai-service/` en Cloud Run. El Dockerfile multi-stage ya existe. Variables de entorno via Secret Manager. Una vez desplegado, migrar trigger a Database Webhook (Opción A).
+### Fase 6 — Deploy en Cloud Run (código listo, setup GCP pendiente)
+
+**Archivos creados/modificados:**
+- `apps/ai-service/Dockerfile` — `COPY uv.lock` + `CMD` respeta `$PORT` (Cloud Run requiere 8080)
+- `apps/ai-service/src/ai_service/api/webhooks.py` — `POST /webhooks/analysis-completed`
+- `apps/ai-service/src/ai_service/config.py` — campo `webhook_secret`
+- `.github/workflows/deploy-ai-service.yml` — CI/CD: build → push a Artifact Registry → deploy a Cloud Run
+
+**GitHub Secrets requeridos** (Settings > Secrets > Actions):
+| Secret | Descripción |
+|--------|-------------|
+| `GCP_PROJECT_ID` | ID del proyecto GCP |
+| `GCP_REGION` | Región, ej: `us-central1` |
+| `GCP_AR_REPO` | Nombre del repo en Artifact Registry, ej: `sintia` |
+| `GCP_SA_KEY` | JSON completo de la service account key |
+
+**Secrets en GCP Secret Manager** (nombres exactos usados en el workflow):
+- `sintia-database-url` — `DATABASE_URL` asyncpg
+- `sintia-openai-key` — `OPENAI_API_KEY`
+- `sintia-service-api-key` — `SERVICE_API_KEY`
+- `sintia-webhook-secret` — `WEBHOOK_SECRET` (valor libre, guárdalo también en Supabase)
+
+**Service account mínima** (roles necesarios):
+- `roles/run.admin` — deploy Cloud Run
+- `roles/artifactregistry.writer` — push imágenes
+- `roles/secretmanager.secretAccessor` — leer secrets en runtime
+
+**Una vez desplegado — configurar Supabase Database Webhook:**
+1. Supabase Dashboard → Database → Webhooks → Create
+2. Table: `meeting_analyses`, Event: `INSERT`
+3. URL: `https://<cloud-run-url>/webhooks/analysis-completed`
+4. HTTP Headers: `x-webhook-secret: <WEBHOOK_SECRET>`
+
+El endpoint recibe el payload de Supabase (`record.id` = analysis_id, `record.meeting_id`) y encola el job en `ai_jobs`. El worker Python lo procesa igual que antes. El insert Deno en `agent-orchestrator` queda como fallback idempotente (ON CONFLICT DO NOTHING).
+
+**Flujo completo con webhook activo:**
+```
+Frontend → agent-orchestrator (Deno) → INSERT meeting_analyses
+                                              ↓ Supabase Webhook
+                                        POST /webhooks/analysis-completed
+                                              ↓
+                                        ai_jobs (worker polling)
+                                              ↓
+                                        meeting_quality_reports
+```

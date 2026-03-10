@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_service.api.audit import router as audit_router
 from ai_service.api.health import router as health_router
+from ai_service.api.webhooks import router as webhooks_router
 from ai_service.config import settings
 from ai_service.database import get_db
 from ai_service.jobs.models import JobCreate, JobRow
@@ -65,5 +66,6 @@ audit_router_protected.include_router(audit_router)
 
 api_router = APIRouter()
 api_router.include_router(health_router)          # no auth
-api_router.include_router(jobs_router)            # auth required
-api_router.include_router(audit_router_protected) # auth required
+api_router.include_router(webhooks_router)        # auth via x-webhook-secret header
+api_router.include_router(jobs_router)            # auth via SERVICE_API_KEY
+api_router.include_router(audit_router_protected) # auth via SERVICE_API_KEY

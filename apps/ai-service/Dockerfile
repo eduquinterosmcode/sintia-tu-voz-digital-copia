@@ -2,8 +2,8 @@ FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim AS builder
 
 WORKDIR /app
 
-# Install dependencies into an isolated venv
-COPY pyproject.toml .
+# Install dependencies into an isolated venv (uv.lock required for --frozen)
+COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 # Copy source and install the project itself
@@ -26,6 +26,6 @@ ENV PYTHONPATH="src"
 RUN useradd --no-create-home --shell /bin/false appuser
 USER appuser
 
-EXPOSE 8000
-
-CMD ["uvicorn", "ai_service.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Cloud Run sets PORT env var (default 8080). Respect it.
+EXPOSE 8080
+CMD uvicorn ai_service.main:app --host 0.0.0.0 --port ${PORT:-8080}

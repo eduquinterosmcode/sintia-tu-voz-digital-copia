@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     # Internal auth — static bearer token for Edge Function proxy calls
     service_api_key: str
 
+    # Webhook auth — shared secret for Supabase Database Webhook calls
+    # Set this in Supabase Dashboard > Database > Webhooks > HTTP Headers
+    webhook_secret: str = "change-me-in-production"
+
     # Worker
     poll_interval_seconds: float = 5.0
     worker_concurrency: int = 4
