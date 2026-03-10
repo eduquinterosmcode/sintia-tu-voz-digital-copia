@@ -140,13 +140,17 @@ apps/ai-service/
 │   │   ├── models.py    # JobStatus (StrEnum), JobCreate, JobRow
 │   │   ├── repository.py # enqueue / claim_next / mark_completed / mark_failed
 │   │   └── worker.py    # polling loop + asyncio.Semaphore
+│   ├── agents/
+│   │   └── auditor/     # AnalysisAuditor — ver sección "Agente crítico"
 │   ├── handlers/
 │   │   └── registry.py  # @register_handler("tipo") — punto de extensión
 │   └── api/
 │       ├── health.py    # GET /health, GET /health/db (sin auth)
-│       └── router.py    # POST /jobs/, GET /jobs/{id} (SERVICE_API_KEY)
+│       ├── audit.py     # POST+GET /audit/{meeting_id} (SERVICE_API_KEY)
+│       └── router.py    # agrega auth y agrega sub-routers
 ├── migrations/
-│   └── 001_create_jobs_table.sql
+│   ├── 001_create_jobs_table.sql
+│   └── 002_create_meeting_quality_reports.sql
 └── tests/
     └── test_health.py
 ```
@@ -162,15 +166,67 @@ apps/ai-service/
 ```python
 from ai_service.handlers.registry import register_handler
 
-@register_handler("analyze_meeting")
+@register_handler("my_job_type")
 async def handle(job: JobRow) -> None:
-    ...  # implementar aquí; el worker lo llama automáticamente
+    ...  # el worker lo llama automáticamente
 ```
 Registrar un nuevo tipo de job = una función decorada. Sin cambios al worker ni al router.
+Agregar el import en `handlers/__init__.py` para que se registre al startup.
 
 **Auth:** `SERVICE_API_KEY` estático (bearer token) en todos los endpoints excepto `/health`. Supabase JWT se agrega cuando el servicio sea llamado externamente.
 
 **Variables de entorno requeridas:** `DATABASE_URL` (asyncpg DSN), `OPENAI_API_KEY`, `SERVICE_API_KEY`. Ver `.env.example`.
+
+### Agente crítico independiente — `AnalysisAuditor` (implementado)
+
+Agente transversal a todos los sectores. Corre después del análisis principal como paso adicional del pipeline. **No existe en el orquestador Deno** — primera capacidad nativa del microservicio Python.
+
+**Qué produce:** reporte de calidad con tres componentes:
+```json
+{
+  "confidence_score": 74,
+  "contradictions": [
+    { "claim_a": "...", "claim_b": "...", "severity": "high", "sources": [...], "explanation": "..." }
+  ],
+  "unsupported_claims": [
+    { "claim": "...", "section": "...", "severity": "medium", "reason": "..." }
+  ],
+  "summary": "El análisis es mayormente sólido..."
+}
+```
+
+**Archivos:**
+```
+agents/auditor/
+├── schemas.py     # AuditReport, Contradiction, UnsupportedClaim, Severity
+├── agent.py       # Agent[AuditorContext] + search_transcript() tool
+├── repository.py  # fetch_meeting_data(), save_report(), get_report()
+└── handler.py     # @register_handler("audit_analysis")
+api/audit.py       # POST /audit/{meeting_id}, GET /audit/{meeting_id}
+migrations/002_create_meeting_quality_reports.sql
+```
+
+**Tabla `meeting_quality_reports`:**
+- FK a `meetings(id)` y `meeting_analyses(id)`
+- `UNIQUE(analysis_id)` — un reporte por versión de análisis; upsert idempotente
+- `confidence_score INT`, `report_json JSONB`, `model_used TEXT`
+
+**Flujo:**
+```
+POST /audit/{meeting_id}              → encola job
+GET  /jobs/{job_id}                   → polling de status
+GET  /audit/{meeting_id}              → fetch reporte final
+```
+
+**Diseño del agente:**
+- Segmentos NO van en el prompt — van en `AuditorContext` accesible via `search_transcript()` tool
+- DB session cerrada antes de la llamada LLM (no se mantienen conexiones durante inferencia)
+- Instrucciones y output en español (Chile)
+
+**Activar en remoto — correr una sola vez:**
+```bash
+psql $DATABASE_URL -f apps/ai-service/migrations/002_create_meeting_quality_reports.sql
+```
 
 ### Integración con Supabase
 El flujo de activación del análisis será:
@@ -181,9 +237,6 @@ La Edge Function `agent-orchestrator` actúa como proxy durante la transición; 
 
 ### Estrategia de migración: Strangler Fig
 La migración del orquestador Deno → Python será gradual. El Deno actual sigue funcionando. Nuevas capacidades se implementan en Python primero; el Deno existente no se toca hasta que el Python sea equivalente y estable.
-
-### Agente crítico independiente
-Pendiente de definición — será implementado directamente en `apps/ai-service/`, no en el orquestador Deno. Ver discusión en próxima sesión.
 
 ### Dominios profesionales configurables por DB
 Los sectores soportarán **activation rules** por especialista, configuradas desde la DB (sin cambios de código para agregar un dominio nuevo). El schema exacto de `activation_rules` en `agent_profiles` está pendiente de diseño.
