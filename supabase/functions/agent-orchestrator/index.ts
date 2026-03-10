@@ -19,15 +19,58 @@ interface Segment {
   text: string;
 }
 
+interface ActivationRules {
+  mode: "always" | "keyword" | "segment_count";
+  keywords?: string[];
+  min_matches?: number;
+  min_segments?: number;
+}
+
 interface AgentProfile {
   id: string;
   name: string;
   role: string;
   system_prompt: string;
   output_schema_json: Record<string, unknown> | null;
+  activation_rules: ActivationRules | null;
   order_index: number;
   enabled: boolean;
   sector_id: string;
+}
+
+// ── Activation Rules ─────────────────────────────────────────────────────
+
+function shouldActivateSpecialist(
+  agent: AgentProfile,
+  segments: Segment[],
+  transcriptText: string
+): boolean {
+  const rules = agent.activation_rules;
+
+  // No rules or mode=always → always activate
+  if (!rules || rules.mode === "always") return true;
+
+  if (rules.mode === "segment_count") {
+    const min = rules.min_segments ?? 1;
+    const active = segments.length >= min;
+    if (!active) console.log(`Specialist "${agent.name}" skipped: segment_count ${segments.length} < ${min}`);
+    return active;
+  }
+
+  if (rules.mode === "keyword") {
+    const keywords = rules.keywords ?? [];
+    const minMatches = rules.min_matches ?? 1;
+    const lowerText = transcriptText.toLowerCase();
+    const matches = keywords.filter((kw) => lowerText.includes(kw.toLowerCase()));
+    const active = matches.length >= minMatches;
+    if (!active) console.log(`Specialist "${agent.name}" skipped: keyword matches ${matches.length}/${minMatches} required`);
+    else console.log(`Specialist "${agent.name}" activated by keywords: [${matches.join(", ")}]`);
+    return active;
+  }
+
+  // Unknown mode → activate by default (fail-open)
+  console.warn(`Specialist "${agent.name}" has unknown activation_rules.mode="${rules.mode}" — activating by default`);
+  return true;
 }
 
 // ── Auth ────────────────────────────────────────────────────────────────
@@ -430,9 +473,23 @@ async function handleAnalyze(p: AnalyzeParams): Promise<Response> {
     );
   }
 
+  // ── Filter specialists by activation_rules ──────────────────────────
+  const transcriptText = allSegments.map((s) => s.text).join(" ");
+  const activeSpecialists = specialists.filter((spec) =>
+    shouldActivateSpecialist(spec, allSegments, transcriptText)
+  );
+
+  // Fail-open: if all specialists were filtered out, use all of them
+  const effectiveSpecialists = activeSpecialists.length > 0 ? activeSpecialists : specialists;
+  if (activeSpecialists.length === 0) {
+    console.warn("All specialists were filtered by activation_rules — falling back to all specialists");
+  } else if (activeSpecialists.length < specialists.length) {
+    console.log(`Activation rules: ${activeSpecialists.length}/${specialists.length} specialists active`);
+  }
+
   const windows = chunkSegments(allSegments);
   const isMapReduce = windows.length > 1;
-  console.log(`Analysis mode: ${isMapReduce ? "map-reduce" : "single-pass"}, segments: ${allSegments.length}, windows: ${windows.length}`);
+  console.log(`Analysis mode: ${isMapReduce ? "map-reduce" : "single-pass"}, segments: ${allSegments.length}, windows: ${windows.length}, active specialists: ${effectiveSpecialists.length}`);
 
   // ── MAP PHASE: run specialists on each window ──
   const windowResults: Array<{ windowIndex: number; specialistResults: Array<{ agent: string; output: Record<string, unknown> }> }> = [];
@@ -444,7 +501,7 @@ async function handleAnalyze(p: AnalyzeParams): Promise<Response> {
       ? ` (ventana ${wi + 1}/${windows.length}, segmentos ${windowSegments[0].segment_index}-${windowSegments[windowSegments.length - 1].segment_index})`
       : "";
 
-    const specialistPromises = specialists.map(async (spec) => {
+    const specialistPromises = effectiveSpecialists.map(async (spec) => {
       const systemPrompt = buildAgentSystemPrompt(spec);
       const userContent = `Sector: ${sector?.name || "General"}
 Reunión: ${meeting.title}${windowLabel}

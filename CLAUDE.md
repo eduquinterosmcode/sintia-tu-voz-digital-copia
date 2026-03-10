@@ -274,8 +274,27 @@ Tab hardcodeado "Calidad" en `MeetingDetail.tsx`. Transversal a todos los sector
 - Empty state con ✅ cuando la sección no tiene issues
 - Placeholder "Auditoría pendiente" si el reporte aún no fue generado
 
-### Fase 5 — Dominios profesionales configurables por DB (pendiente)
-Los sectores soportarán **activation rules** por especialista, configuradas desde la DB (sin cambios de código para agregar un dominio nuevo). El schema exacto de `activation_rules` en `agent_profiles` está pendiente de diseño.
+### Fase 5 — Dominios profesionales configurables por DB (completa)
+
+Campo `activation_rules JSONB` en `agent_profiles`. Backward-compatible: `null` = siempre activar.
+
+**Modos soportados:**
+```json
+{ "mode": "always" }
+{ "mode": "keyword", "keywords": ["contrato", "precio"], "min_matches": 1 }
+{ "mode": "segment_count", "min_segments": 20 }
+```
+
+**Comportamiento:**
+- El orchestrator evalúa las rules contra el transcript completo antes del MAP phase
+- Fail-open: si todas las rules filtran todos los especialistas, se usan todos (no falla el análisis)
+- Skips y activaciones quedan loggeados en los Edge Function logs
+
+**Archivos modificados:**
+- `supabase/functions/agent-orchestrator/index.ts` — interface `ActivationRules`, función `shouldActivateSpecialist()`, filtro en `handleAnalyze()`
+- `supabase/migrations/20260310120000_add_activation_rules_to_agent_profiles.sql` — `ALTER TABLE agent_profiles ADD COLUMN activation_rules JSONB`
+
+**Para agregar un nuevo dominio sin código:** insertar filas en `sectors` + `agent_profiles` (con o sin `activation_rules`) — el orchestrator lo toma automáticamente.
 
 ### Fase 6 — Deploy en Cloud Run (pendiente)
 Dockerizar y desplegar `apps/ai-service/` en Cloud Run. El Dockerfile multi-stage ya existe. Variables de entorno via Secret Manager. Una vez desplegado, migrar trigger a Database Webhook (Opción A).
