@@ -569,6 +569,21 @@ Consolida los resultados en el JSON final según el schema de coordinador.`;
 
   await supabase.from("meetings").update({ status: "analyzed" }).eq("id", meetingId);
 
+  // Enqueue quality audit job for the Python ai-service worker (Fase 3 — Strangler Fig).
+  // Uses upsert + ignoreDuplicates so re-running analysis never creates duplicate jobs.
+  // Failure is non-fatal: the audit is a best-effort step; analysis response is unaffected.
+  if (analysis?.id) {
+    const { error: jobError } = await supabase.from("ai_jobs").upsert({
+      idempotency_key: `audit_analysis:${analysis.id}`,
+      job_type: "audit_analysis",
+      payload: { meeting_id: meetingId, analysis_id: analysis.id },
+      priority: 1,
+      max_attempts: 3,
+    }, { onConflict: "idempotency_key", ignoreDuplicates: true });
+    if (jobError) console.error("Failed to enqueue audit job:", jobError.message);
+    else console.log(`Audit job enqueued for analysis_id=${analysis.id}`);
+  }
+
   // Log usage
   await supabase.from("usage_events").insert({
     org_id: meeting.org_id as string, meeting_id: meetingId,
