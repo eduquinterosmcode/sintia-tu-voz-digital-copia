@@ -177,6 +177,10 @@ Agregar el import en `handlers/__init__.py` para que se registre al startup.
 
 **Variables de entorno requeridas:** `DATABASE_URL` (asyncpg DSN), `OPENAI_API_KEY`, `SERVICE_API_KEY`. Ver `.env.example`.
 
+**Gotchas conocidos (encontrados en e2e):**
+- **asyncpg + `::jsonb`**: el operador de cast `::` de PostgreSQL choca con el parser de params nombrados de SQLAlchemy/asyncpg. Siempre usar `CAST(:param AS jsonb)` en queries `text()` — nunca `:param::jsonb`.
+- **`OPENAI_API_KEY` no propagada**: `pydantic-settings` lee `.env` en el objeto `settings` pero NO setea `os.environ`. El SDK de OpenAI y `openai-agents` leen directamente de `os.environ`. Fix en `main.py`: `os.environ.setdefault("OPENAI_API_KEY", settings.openai_api_key)` al inicio del módulo.
+
 ### Agente crítico independiente — `AnalysisAuditor` (implementado)
 
 Agente transversal a todos los sectores. Corre después del análisis principal como paso adicional del pipeline. **No existe en el orquestador Deno** — primera capacidad nativa del microservicio Python.
