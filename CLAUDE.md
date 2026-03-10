@@ -257,8 +257,22 @@ Después de `update({ status: "analyzed" })`, inserta en `ai_jobs` via `supabase
 ### Estrategia de migración: Strangler Fig
 La migración del orquestador Deno → Python será gradual. El Deno actual sigue funcionando. Nuevas capacidades se implementan en Python primero; el Deno existente no se toca hasta que el Python sea equivalente y estable.
 
-### Fase 4 — Frontend del reporte de calidad (pendiente)
-Tab hardcodeado "Calidad" en `MeetingDetail.tsx`, visible cuando existe `meeting_quality_reports` para esa reunión. No usa `view_config_json` (es transversal a todos los sectores). Diseño pendiente.
+### Fase 4 — Frontend del reporte de calidad (completa)
+
+Tab hardcodeado "Calidad" en `MeetingDetail.tsx`. Transversal a todos los sectores — no usa `view_config_json`.
+
+**Archivos:**
+- `src/features/analysis/QualityReportTab.tsx` — componente nuevo
+- `src/hooks/useMeetingBundle.ts` — `quality_report` agregado al tipo `MeetingBundle`
+- `supabase/functions/get-meeting-bundle/index.ts` — `meeting_quality_reports` incluido en el `Promise.all`
+- `src/pages/MeetingDetail.tsx` — tab "Calidad" agregado con score inline en el trigger
+
+**Comportamiento:**
+- Tab visible solo cuando existe `analysis` para la reunión
+- Score mostrado en el tab trigger con color: verde ≥80, ámbar ≥60, rojo <60
+- Tres secciones: ScoreGauge · Contradicciones · Claims sin evidencia
+- Empty state con ✅ cuando la sección no tiene issues
+- Placeholder "Auditoría pendiente" si el reporte aún no fue generado
 
 ### Fase 5 — Dominios profesionales configurables por DB (pendiente)
 Los sectores soportarán **activation rules** por especialista, configuradas desde la DB (sin cambios de código para agregar un dominio nuevo). El schema exacto de `activation_rules` en `agent_profiles` está pendiente de diseño.
