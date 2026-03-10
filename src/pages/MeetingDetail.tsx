@@ -14,6 +14,7 @@ import AudioPlayer from "@/components/AudioPlayer";
 import TranscriptTab from "@/features/transcript/TranscriptTab";
 import { AnalysisTabContent, ICONS } from "@/features/analysis/DynamicAnalysisView";
 import AgentRunsTab from "@/features/analysis/AgentRunsTab";
+import QualityReportTab from "@/features/analysis/QualityReportTab";
 import ChatTab from "@/features/chat/ChatTab";
 
 export default function MeetingDetail() {
@@ -93,7 +94,7 @@ export default function MeetingDetail() {
     );
   }
 
-  const { meeting, speakers, segments, analysis, chat_messages, audio, transcript } = bundle;
+  const { meeting, speakers, segments, analysis, chat_messages, audio, transcript, quality_report } = bundle;
   const analysisJson = (analysis?.analysis_json ?? null) as Record<string, unknown> | null;
   const viewConfig = meeting.sectors?.view_config_json ?? null;
 
@@ -214,6 +215,16 @@ export default function MeetingDetail() {
               </TabsTrigger>
             );
           })}
+          {analysis && (
+            <TabsTrigger value="calidad" className="gap-1.5">
+              Calidad
+              {quality_report && (
+                <span className={`text-xs font-bold ${quality_report.confidence_score >= 80 ? "text-emerald-500" : quality_report.confidence_score >= 60 ? "text-amber-500" : "text-destructive"}`}>
+                  {quality_report.confidence_score}
+                </span>
+              )}
+            </TabsTrigger>
+          )}
           <TabsTrigger value="agents" disabled={!analysis?.agent_runs}>Agentes</TabsTrigger>
           <TabsTrigger value="chat" disabled={!hasTranscript}>Chat</TabsTrigger>
         </TabsList>
@@ -243,6 +254,16 @@ export default function MeetingDetail() {
             )}
           </TabsContent>
         ))}
+        <TabsContent value="calidad">
+          {quality_report ? (
+            <QualityReportTab report={quality_report} />
+          ) : (
+            <div className="flex flex-col items-center justify-center py-16 gap-2 text-muted-foreground text-sm">
+              <p>Auditoría de calidad pendiente.</p>
+              <p className="text-xs">El reporte se genera automáticamente después del análisis.</p>
+            </div>
+          )}
+        </TabsContent>
         <TabsContent value="agents">
           <AgentRunsTab agentRuns={analysis?.agent_runs || null} />
         </TabsContent>

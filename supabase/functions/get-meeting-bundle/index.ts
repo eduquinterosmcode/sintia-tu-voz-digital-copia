@@ -78,7 +78,7 @@ Deno.serve(async (req) => {
     }
     segmentsQuery.order("t_start_sec").range(segmentPage * segmentLimit, (segmentPage + 1) * segmentLimit - 1);
 
-    const [speakersRes, segmentsRes, analysisRes, chatRes, audioRes] =
+    const [speakersRes, segmentsRes, analysisRes, chatRes, audioRes, qualityRes] =
       await Promise.all([
         supabase.from("meeting_speakers").select("*").eq("meeting_id", meetingId),
         segmentsQuery,
@@ -88,6 +88,10 @@ Deno.serve(async (req) => {
           .order("created_at", { ascending: false }).limit(50),
         supabase.from("meeting_audio").select("id, storage_path, mime_type, duration_sec, created_at")
           .eq("meeting_id", meetingId).order("created_at", { ascending: false }).limit(1).single(),
+        supabase.from("meeting_quality_reports")
+          .select("id, analysis_id, confidence_score, report_json, created_at")
+          .eq("meeting_id", meetingId)
+          .order("created_at", { ascending: false }).limit(1).single(),
       ]);
 
     return new Response(
@@ -100,6 +104,7 @@ Deno.serve(async (req) => {
         analysis: analysisRes.data || null,
         chat_messages: (chatRes.data || []).reverse(),
         audio: audioRes.data || null,
+        quality_report: qualityRes.data || null,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );

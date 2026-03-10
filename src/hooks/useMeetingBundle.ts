@@ -71,6 +71,29 @@ export interface MeetingBundle {
     mime_type: string | null;
     duration_sec: number | null;
   } | null;
+  quality_report: {
+    id: string;
+    analysis_id: string;
+    confidence_score: number;
+    report_json: {
+      confidence_score: number;
+      contradictions: Array<{
+        claim_a: string;
+        claim_b: string;
+        severity: "high" | "medium" | "low";
+        sources: string[];
+        explanation: string;
+      }>;
+      unsupported_claims: Array<{
+        claim: string;
+        section: string;
+        severity: "high" | "medium" | "low";
+        reason: string;
+      }>;
+      summary: string;
+    };
+    created_at: string;
+  } | null;
 }
 
 export function useMeetingBundle(meetingId: string | undefined) {
