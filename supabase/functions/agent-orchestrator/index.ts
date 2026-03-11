@@ -514,6 +514,9 @@ async function handleAnalyze(p: AnalyzeParams): Promise<Response> {
     );
   }
 
+  // Mark as analyzing so the frontend can poll status without blocking on the HTTP response.
+  await supabase.from("meetings").update({ status: "analyzing" }).eq("id", meetingId);
+
   // ── Filter specialists by activation_rules ──────────────────────────
   const transcriptText = allSegments.map((s) => s.text).join(" ");
   const activeSpecialists = specialists.filter((spec) =>

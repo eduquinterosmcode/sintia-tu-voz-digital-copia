@@ -96,11 +96,17 @@ export interface MeetingBundle {
   } | null;
 }
 
+const PROCESSING_STATUSES = new Set(["analyzing", "transcribing"]);
+
 export function useMeetingBundle(meetingId: string | undefined) {
   return useQuery<MeetingBundle>({
     queryKey: ["meeting-bundle", meetingId],
     queryFn: () => getMeetingBundle(meetingId!),
     enabled: !!meetingId,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) => {
+      const status = query.state.data?.meeting?.status;
+      return status && PROCESSING_STATUSES.has(status) ? 3000 : false;
+    },
   });
 }

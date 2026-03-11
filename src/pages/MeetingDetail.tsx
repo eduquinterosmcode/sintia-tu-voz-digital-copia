@@ -7,7 +7,7 @@ import { useMeetingBundle } from "@/hooks/useMeetingBundle";
 import { useQueryClient } from "@tanstack/react-query";
 import { analyzeMeeting, transcribeMeeting } from "@/services/apiClient";
 import { useToast } from "@/hooks/use-toast";
-import { useState } from "react";
+import { useEffect, useRef } from "react";
 import StatusBadge from "@/components/StatusBadge";
 import AudioRecorder from "@/components/AudioRecorder";
 import AudioPlayer from "@/components/AudioPlayer";
@@ -22,54 +22,63 @@ export default function MeetingDetail() {
   const { data: bundle, isLoading, error, refetch } = useMeetingBundle(id);
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const [analyzing, setAnalyzing] = useState(false);
-  const [transcribing, setTranscribing] = useState(false);
+  // Track previous status to detect transitions (e.g. analyzing → analyzed)
+  const prevStatusRef = useRef<string | undefined>(undefined);
 
   const handleRefresh = () => {
     queryClient.invalidateQueries({ queryKey: ["meeting-bundle", id] });
   };
 
-  const handleAnalyze = async () => {
-    if (!id) return;
-    setAnalyzing(true);
-    try {
-      // If not yet transcribed, run STT first
-      const needsTranscription = meeting.status === "uploaded" || (!hasTranscript && meeting.status !== "transcribed" && meeting.status !== "analyzed");
-      if (needsTranscription) {
-        toast({ title: "Transcribiendo audio...", description: "Paso 1 de 2: convirtiendo audio a texto." });
-        await transcribeMeeting(id);
-      }
-      toast({ title: "Analizando...", description: needsTranscription ? "Paso 2 de 2: analizando transcripción." : "Procesando transcripción." });
-      await analyzeMeeting(id);
+  // Toast when analysis completes (status transition detected via polling)
+  useEffect(() => {
+    const currentStatus = bundle?.meeting?.status;
+    if (prevStatusRef.current === "analyzing" && currentStatus === "analyzed") {
       toast({ title: "Análisis completado", description: "Los resultados están listos." });
-      refetch();
-    } catch (err) {
-      toast({
+    }
+    if (prevStatusRef.current === "analyzing" && currentStatus === "error") {
+      toast({ title: "Error en análisis", description: "Revisa los logs del servidor.", variant: "destructive" });
+    }
+    prevStatusRef.current = currentStatus;
+  }, [bundle?.meeting?.status]);
+
+  const handleAnalyze = () => {
+    if (!id) return;
+    const status = bundle?.meeting?.status;
+    const hasSegments = (bundle?.segments?.length ?? 0) > 0;
+    const needsTranscription = status === "uploaded" || (!hasSegments && status !== "transcribed" && status !== "analyzed");
+
+    if (needsTranscription) {
+      toast({ title: "Procesando en segundo plano", description: "Transcripción → análisis. Puedes seguir navegando." });
+      transcribeMeeting(id)
+        .then(() => analyzeMeeting(id))
+        .catch((err) => toast({
+          title: "Error al procesar",
+          description: err instanceof Error ? err.message : "Intenta de nuevo",
+          variant: "destructive",
+        }));
+    } else {
+      toast({ title: "Análisis iniciado", description: "Los agentes están procesando. Puedes seguir navegando." });
+      analyzeMeeting(id).catch((err) => toast({
         title: "Error en análisis",
         description: err instanceof Error ? err.message : "Intenta de nuevo",
         variant: "destructive",
-      });
-    } finally {
-      setAnalyzing(false);
+      }));
     }
   };
 
-  const handleTranscribeOnly = async () => {
+  const handleTranscribeOnly = () => {
     if (!id) return;
-    setTranscribing(true);
-    try {
-      await transcribeMeeting(id);
-      toast({ title: "Transcripción completada", description: "Puedes revisar la transcripción." });
-      refetch();
-    } catch (err) {
-      toast({
+    toast({ title: "Transcripción iniciada", description: "Puedes seguir navegando mientras se procesa." });
+    transcribeMeeting(id)
+      .then(() => {
+        toast({ title: "Transcripción completada", description: "Puedes revisar la transcripción." });
+        refetch();
+      })
+      .catch((err) => toast({
         title: "Error en transcripción",
         description: err instanceof Error ? err.message : "Intenta de nuevo",
         variant: "destructive",
-      });
-    } finally {
-      setTranscribing(false);
-    }
+      }));
   };
 
   if (isLoading) {
@@ -104,9 +113,9 @@ export default function MeetingDetail() {
     speakerMap[s.speaker_label] = s.speaker_name;
   });
 
+  const isProcessing = meeting.status === "analyzing" || meeting.status === "transcribing";
   const canAnalyze = (meeting.status === "transcribed" || meeting.status === "analyzed" || meeting.status === "uploaded") && (segments.length > 0 || meeting.status === "uploaded");
   const hasTranscript = segments.length > 0;
-  const isProcessing = analyzing || transcribing;
 
   const fmtDate = (iso: string) =>
     new Date(iso).toLocaleString("es-CL", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -143,10 +152,10 @@ export default function MeetingDetail() {
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <StatusBadge status={meeting.status} />
-          {canAnalyze && (
+          {(canAnalyze || isProcessing) && (
             <div className="flex items-center">
               <Button onClick={handleAnalyze} disabled={isProcessing} size="sm" className="rounded-r-none">
-                {analyzing ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Play className="h-3 w-3 mr-1.5" />}
+                {isProcessing ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Play className="h-3 w-3 mr-1.5" />}
                 Analizar
               </Button>
               <DropdownMenu>
@@ -156,11 +165,11 @@ export default function MeetingDetail() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={handleTranscribeOnly} disabled={transcribing}>
+                  <DropdownMenuItem onClick={handleTranscribeOnly} disabled={isProcessing}>
                     <FileText className="h-4 w-4 mr-2" />
                     Solo transcribir
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleAnalyze} disabled={analyzing || !hasTranscript}>
+                  <DropdownMenuItem onClick={handleAnalyze} disabled={isProcessing || !hasTranscript}>
                     <RotateCcw className="h-4 w-4 mr-2" />
                     Re-analizar
                   </DropdownMenuItem>
@@ -186,18 +195,18 @@ export default function MeetingDetail() {
         </div>
       ) : null}
 
-      {/* Progress indicators */}
-      {(analyzing || transcribing) && (
+      {/* Progress indicators — driven by DB status, survives page refresh */}
+      {isProcessing && (
         <div className="mb-4 flex items-center gap-3 p-4 rounded-lg border border-primary/20 bg-primary/5">
           <Loader2 className="h-5 w-5 animate-spin text-primary" />
           <div>
             <p className="text-sm font-medium text-foreground">
-              {analyzing ? "Analizando reunión..." : "Transcribiendo audio..."}
+              {meeting.status === "analyzing" ? "Analizando reunión..." : "Transcribiendo audio..."}
             </p>
             <p className="text-xs text-muted-foreground">
-              {analyzing
-                ? "Los agentes de IA están procesando la transcripción. Esto puede tomar 30-60 segundos."
-                : "Convirtiendo audio a texto. Esto puede tomar 1-2 minutos según la duración."}
+              {meeting.status === "analyzing"
+                ? "Los agentes de IA están procesando. Puedes navegar libremente, el análisis continúa en segundo plano."
+                : "Convirtiendo audio a texto. Puedes navegar libremente, la transcripción continúa en segundo plano."}
             </p>
           </div>
         </div>
