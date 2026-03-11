@@ -117,9 +117,25 @@ async function getLatestTranscriptId(
   return data?.id || null;
 }
 
+async function getQueryEmbedding(openaiKey: string, query: string): Promise<number[] | null> {
+  try {
+    const res = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${openaiKey}` },
+      body: JSON.stringify({ model: "text-embedding-3-small", input: query }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.data[0]?.embedding ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function getRelevantSegments(
   supabase: ReturnType<typeof createClient>,
   meetingId: string,
+  openaiKey: string,
   query?: string,
   limit = 60
 ): Promise<Segment[]> {
@@ -127,13 +143,31 @@ async function getRelevantSegments(
   if (!transcriptId) return [];
 
   if (query) {
+    // ── Level 1: vector similarity search ──
+    const queryEmbedding = await getQueryEmbedding(openaiKey, query);
+    if (queryEmbedding) {
+      const { data: vectorResults } = await supabase.rpc("match_meeting_segments", {
+        p_meeting_id: meetingId,
+        p_transcript_id: transcriptId,
+        p_query_embedding: queryEmbedding,
+        p_match_count: limit,
+        p_min_similarity: 0.3,
+      });
+      if (vectorResults && vectorResults.length > 0) {
+        console.log(`Vector search: ${vectorResults.length} segments (similarity ≥ 0.3)`);
+        return vectorResults;
+      }
+      console.log("Vector search returned 0 results — falling back to full-text");
+    }
+
+    // ── Level 2: full-text search (for segments without embeddings) ──
     const tsQuery = query
       .split(/\s+/)
       .filter(Boolean)
       .map((w) => `${w}:*`)
       .join(" & ");
 
-    const { data } = await supabase
+    const { data: ftResults } = await supabase
       .from("meeting_segments")
       .select("id, segment_index, speaker_label, speaker_name, t_start_sec, t_end_sec, text")
       .eq("meeting_id", meetingId)
@@ -142,9 +176,13 @@ async function getRelevantSegments(
       .order("t_start_sec")
       .limit(limit);
 
-    if (data && data.length > 0) return data;
+    if (ftResults && ftResults.length > 0) {
+      console.log(`Full-text search: ${ftResults.length} segments`);
+      return ftResults;
+    }
   }
 
+  // ── Level 3: chronological fallback ──
   const { data } = await supabase
     .from("meeting_segments")
     .select("id, segment_index, speaker_label, speaker_name, t_start_sec, t_end_sec, text")
@@ -690,8 +728,8 @@ async function handleChat(p: ChatParams): Promise<Response> {
     meeting_id: meetingId, user_id: user.id, role: "user", content: userQuestion,
   });
 
-  // Retrieve relevant segments
-  const segments = await getRelevantSegments(supabase, meetingId, userQuestion, 30);
+  // Retrieve relevant segments (vector → full-text → chronological)
+  const segments = await getRelevantSegments(supabase, meetingId, openaiKey, userQuestion, 30);
   const transcriptText = formatSegmentsForPrompt(segments, speakerMap);
 
   // Get latest analysis summary if available

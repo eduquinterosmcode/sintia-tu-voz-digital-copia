@@ -9,6 +9,38 @@ interface DiarizedSegment {
   text: string;
 }
 
+// ── Embeddings ───────────────────────────────────────────────────────────────
+
+const EMBEDDING_MODEL = "text-embedding-3-small";
+const EMBEDDING_BATCH_SIZE = 500; // well under OpenAI's 2048 limit
+
+async function generateEmbeddings(openaiKey: string, texts: string[]): Promise<number[][]> {
+  const allEmbeddings: number[][] = [];
+
+  for (let i = 0; i < texts.length; i += EMBEDDING_BATCH_SIZE) {
+    const batch = texts.slice(i, i + EMBEDDING_BATCH_SIZE);
+
+    const res = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${openaiKey}`,
+      },
+      body: JSON.stringify({ model: EMBEDDING_MODEL, input: batch }),
+    });
+
+    if (!res.ok) throw new Error(`Embeddings API error: ${res.status}`);
+
+    const data = await res.json();
+    // Sort by index to guarantee order matches input
+    const sorted = (data.data as Array<{ index: number; embedding: number[] }>)
+      .sort((a, b) => a.index - b.index);
+    allEmbeddings.push(...sorted.map((item) => item.embedding));
+  }
+
+  return allEmbeddings;
+}
+
 async function verifyUserAndMeeting(
   supabaseUrl: string,
   serviceKey: string,
@@ -220,8 +252,19 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Insert segments
+    // Insert segments (with embeddings when possible)
     if (rawSegments.length > 0) {
+      // Generate embeddings non-fatally — if this fails, segments insert without
+      // embeddings and the chat RAG falls back to full-text search automatically.
+      let embeddings: number[][] | null = null;
+      try {
+        const texts = rawSegments.map((s) => s.text);
+        embeddings = await generateEmbeddings(openaiKey, texts);
+        console.log(`Generated ${embeddings.length} embeddings for ${rawSegments.length} segments`);
+      } catch (embErr) {
+        console.warn("Embedding generation failed — inserting segments without embeddings:", embErr);
+      }
+
       const segmentRows = rawSegments.map((seg, idx) => ({
         meeting_id,
         transcript_id: transcript.id,
@@ -230,6 +273,7 @@ Deno.serve(async (req) => {
         t_start_sec: seg.start,
         t_end_sec: seg.end,
         text: seg.text,
+        ...(embeddings ? { embedding: embeddings[idx] } : {}),
       }));
 
       const { error: segError } = await supabase.from("meeting_segments").insert(segmentRows);
