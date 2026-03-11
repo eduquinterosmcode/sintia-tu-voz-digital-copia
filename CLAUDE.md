@@ -120,7 +120,7 @@ Orden decidido el 2026-03-11 después de análisis de brechas para llegar a prod
 | 2 | **Storage policies + RBAC básico** | ✅ completo | Políticas RLS tightened (org_provider_settings, organizations, org_members). Edge Function `get-org-members`. SettingsPage con role badge, campos read-only para members, sección Equipo. |
 | 3 | **Streaming en chat** | ✅ completo | SSE desde `handleChatStream()` en agent-orchestrator. `streamChatWithMeeting()` en apiClient con fetch directo. ChatTab con cursor parpadeante y acumulación en tiempo real. |
 | 4 | **Polling/WebSocket para análisis** | ✅ completo | Fire-and-forget + polling DB-driven. `agent-orchestrator` escribe `status="analyzing"` antes del pipeline LLM. `useMeetingBundle` hace polling cada 3s mientras el status es processing. `MeetingDetail` usa `useRef` para detectar la transición y mostrar toast. El usuario puede navegar libremente. |
-| 5 | **Exportación básica (PDF/copy)** | pendiente | Feature más pedido en cualquier tool de reuniones. Ningún usuario profesional vive solo dentro de la app. |
+| 5 | **Exportación básica (PDF/copy)** | ✅ completo | Botón "Exportar" (outline) en MeetingDetail, visible cuando hay análisis. "Copiar análisis" → Markdown al portapapeles. "Exportar PDF" → ventana nueva con HTML+estilos inline + `window.print()`. Sin dependencias nuevas. Lógica en `src/features/export/exportUtils.ts`. |
 | 6 | **Búsqueda entre reuniones** | pendiente | Se vuelve necesario con más de ~10 reuniones. Actualmente no hay forma de encontrar contenido histórico. |
 | 7 | **Diarización automática de speakers** | pendiente | Alta fricción diaria (renombrar SPEAKER_0 manualmente), pero requiere infra adicional (pyannote.audio o servicio externo). Se defer hasta tener Cloud Run activo. |
 
