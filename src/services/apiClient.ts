@@ -177,6 +177,21 @@ export async function listMeetings(orgId: string) {
   return data;
 }
 
+// ── Org Members ─────────────────────────────────────────────────────────
+export interface OrgMember {
+  id: string;
+  user_id: string;
+  email: string;
+  role: string;
+  created_at: string;
+  is_self: boolean;
+}
+
+export async function getOrgMembers(): Promise<{ members: OrgMember[]; caller_role: string }> {
+  const data = await invokeFunction("get-org-members", {});
+  return data as { members: OrgMember[]; caller_role: string };
+}
+
 // ── Demo ────────────────────────────────────────────────────────────────
 export async function createDemoMeeting(orgId: string, sectorKey: string) {
   const data = await invokeFunction("create-demo-meeting", {
