@@ -296,7 +296,9 @@ Campo `activation_rules JSONB` en `agent_profiles`. Backward-compatible: `null` 
 
 **Para agregar un nuevo dominio sin código:** insertar filas en `sectors` + `agent_profiles` (con o sin `activation_rules`) — el orchestrator lo toma automáticamente.
 
-### Fase 6 — Deploy en Cloud Run (código listo, setup GCP pendiente)
+### Fase 6 — Deploy en Cloud Run (DIFERIDA INTENCIONALMENTE — no incurrir en costos GCP mientras se sigue desarrollando)
+
+**Decisión:** El código está 100% listo para deploy. Se difiere el setup de GCP (Artifact Registry, Cloud Run, Secret Manager, service account) para evitar costos mientras el producto sigue en desarrollo activo. Cuando se decida activar, solo se necesita el setup manual descrito abajo — sin cambios de código.
 
 **Archivos creados/modificados:**
 - `apps/ai-service/Dockerfile` — `COPY uv.lock` + `CMD` respeta `$PORT` (Cloud Run requiere 8080)
