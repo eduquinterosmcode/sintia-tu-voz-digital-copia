@@ -116,9 +116,9 @@ Orden decidido el 2026-03-11 después de análisis de brechas para llegar a prod
 
 | # | Feature | Estado | Razonamiento |
 |---|---------|--------|--------------|
-| 1 | **Embeddings semánticos en chat** | pendiente | Mayor impacto en calidad de respuestas, cero costo adicional hasta escala. El RAG actual con `tsvector` pierde contexto semántico. |
-| 2 | **Storage policies + RBAC básico** | pendiente | Prerequisito de seguridad antes de mostrar el producto a cualquier usuario externo. La Storage policy actual es permisiva y no hay roles dentro de una org. |
-| 3 | **Streaming en chat** | pendiente | Cambia la percepción del producto — sin streaming las respuestas de 5-10s parecen errores. SSE desde Edge Function. |
+| 1 | **Embeddings semánticos en chat** | ✅ completo | RAG con `text-embedding-3-small` + HNSW index. 3 niveles: vector → full-text → cronológico. Script `backfill_embeddings.py` para meetings existentes. |
+| 2 | **Storage policies + RBAC básico** | ✅ completo | Políticas RLS tightened (org_provider_settings, organizations, org_members). Edge Function `get-org-members`. SettingsPage con role badge, campos read-only para members, sección Equipo. |
+| 3 | **Streaming en chat** | ✅ completo | SSE desde `handleChatStream()` en agent-orchestrator. `streamChatWithMeeting()` en apiClient con fetch directo. ChatTab con cursor parpadeante y acumulación en tiempo real. |
 | 4 | **Polling/WebSocket para análisis** | pendiente | El análisis sincrónico con spinner bloqueante es la mayor fricción en el flujo principal. Si el tab se cierra, el usuario no sabe el resultado. |
 | 5 | **Exportación básica (PDF/copy)** | pendiente | Feature más pedido en cualquier tool de reuniones. Ningún usuario profesional vive solo dentro de la app. |
 | 6 | **Búsqueda entre reuniones** | pendiente | Se vuelve necesario con más de ~10 reuniones. Actualmente no hay forma de encontrar contenido histórico. |
