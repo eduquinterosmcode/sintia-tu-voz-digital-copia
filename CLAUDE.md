@@ -367,3 +367,92 @@ Frontend → agent-orchestrator (Deno) → INSERT meeting_analyses
                                               ↓
                                         meeting_quality_reports
 ```
+
+---
+
+## Plan de migración: especialistas Deno → agentes Python reales
+
+> **Timing:** Este plan se ejecuta DESPUÉS de completar el roadmap de producto (embeddings, RBAC, streaming, polling, exportación, búsqueda, diarización). El Deno actual sigue funcionando durante toda esa fase.
+
+### Estado actual
+
+Los "especialistas" en el `agent-orchestrator` Deno son llamadas LLM directas: cada especialista es una fila en `agent_profiles` con `system_prompt` y `output_schema_json`. El orquestador les pasa texto del transcript y espera un JSON de vuelta. No son agentes reales — no tienen herramientas, no razonan en múltiples pasos, no pueden buscar evidencia ni hacer llamadas externas.
+
+```
+agent-orchestrator (Deno)
+  ├── coordinator (LLM call) ← consolida resultados
+  └── specialist_N (LLM call) ← prompt + transcript chunk → JSON
+```
+
+### Objetivo
+
+Migrar cada especialista a un `Agent` real del OpenAI Agents SDK en Python, con herramientas propias por dominio y capacidad de razonamiento multi-paso. El coordinador pasa a ser un agente que orquesta a los especialistas como subagentes (patrón Agent-as-Tool).
+
+```
+agent-orchestrator (Python, apps/ai-service)
+  └── CoordinatorAgent
+        ├── tool: run_specialist("negocios_resumen")   → NegocionResumenAgent
+        ├── tool: run_specialist("negocios_riesgos")   → NegociosRiesgosAgent
+        ├── tool: run_specialist("negocios_acciones")  → NegociosAccionesAgent
+        └── tool: search_transcript(query)             → segmentos relevantes
+```
+
+### Patrón Agent-as-Tool
+
+Cada especialista Python es un `Agent` con sus propias herramientas de dominio:
+
+```python
+# Ejemplo: especialista de riesgos para sector Negocios
+risks_agent = Agent(
+    name="Analista de Riesgos",
+    instructions="...",
+    tools=[search_transcript, get_speaker_context],
+    output_type=RisksOutput,  # Pydantic schema
+)
+
+# El coordinador lo usa como herramienta
+coordinator = Agent(
+    name="Coordinador",
+    instructions="...",
+    tools=[
+        risks_agent.as_tool(name="analizar_riesgos", description="..."),
+        actions_agent.as_tool(name="analizar_acciones", description="..."),
+        search_transcript,
+    ],
+    output_type=FinalAnalysisOutput,
+)
+```
+
+### Ventajas sobre el modelo Deno actual
+
+| Capacidad | Deno actual | Python con Agents SDK |
+|-----------|-------------|----------------------|
+| Herramientas propias por especialista | ✗ | ✓ |
+| Razonamiento multi-paso | ✗ | ✓ |
+| Búsqueda de evidencia antes de concluir | ✗ | ✓ |
+| Tipado fuerte del output (Pydantic) | parcial (JSON schema) | ✓ |
+| Trazabilidad por agente (traces) | manual (agent_runs) | ✓ nativo |
+| Specialists por dominio sin cambio de código | ✓ (via DB) | ✓ (via DB + registro) |
+
+### Estructura objetivo en apps/ai-service
+
+```
+agents/
+├── auditor/          # ya implementado (Fase 2)
+├── base/             # herramientas compartidas: search_transcript, get_context
+└── sectors/
+    ├── negocios/     # CoordinatorAgent + specialists
+    ├── legal/
+    └── salud/        # cada sector es un módulo independiente
+```
+
+### Estrategia de migración (Strangler Fig continuado)
+
+1. Implementar el primer sector completo en Python (ej: Negocios)
+2. Agregar job type `analyze_meeting` al worker Python
+3. Enrutar solo ese sector al Python; Deno sigue manejando el resto
+4. Validar calidad de output vs Deno en meetings reales
+5. Migrar sector por sector hasta que todos estén en Python
+6. Retirar el orquestador Deno
+
+El enrutamiento sector por sector se hace en `agent-orchestrator` Deno: si `sector.key` está en la lista de sectores migrados, delegar al Python service via HTTP (una vez que esté en Cloud Run); si no, usar el pipeline Deno existente.
