@@ -158,6 +158,8 @@ Orden decidido el 2026-03-11 después de análisis de brechas para llegar a prod
 - Cero tests de integración o E2E — riesgo creciente con cada refactor
 - Dashboard usa `useState` en vez de TanStack Query — inconsistencia a resolver
 - `getMeetingBundle` usa raw `fetch` con URL hardcodeada — único llamado fuera de `apiClient.ts`
+- **Supabase Storage límite 50MB (plan gratuito)** — archivos de reuniones largas lo superan fácilmente. Opciones: comprimir audio en el cliente antes de subir (Web Audio API / ffmpeg.wasm), o migrar a plan pro cuando haya usuarios reales.
+- **Whisper API límite 25MB por archivo** — reuniones de 40+ minutos fallan con error 400. Solución pendiente: implementar chunking de audio en `stt-transcribe` antes de enviar a Whisper (dividir en fragmentos de ~10 min con overlap de ~5s para no cortar palabras, transcribir en serie, concatenar resultados). Afecta directamente a usuarios con reuniones largas — priorizar antes de público general.
 
 ---
 
