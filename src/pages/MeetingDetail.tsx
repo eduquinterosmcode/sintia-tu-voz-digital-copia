@@ -2,7 +2,7 @@ import { useParams, Link } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { ArrowLeft, Loader2, Play, RefreshCw, ChevronDown, FileText, RotateCcw } from "lucide-react";
+import { ArrowLeft, Loader2, Play, RefreshCw, ChevronDown, FileText, RotateCcw, Download, Clipboard } from "lucide-react";
 import { useMeetingBundle } from "@/hooks/useMeetingBundle";
 import { useQueryClient } from "@tanstack/react-query";
 import { analyzeMeeting, transcribeMeeting } from "@/services/apiClient";
@@ -16,6 +16,7 @@ import { AnalysisTabContent, ICONS } from "@/features/analysis/DynamicAnalysisVi
 import AgentRunsTab from "@/features/analysis/AgentRunsTab";
 import QualityReportTab from "@/features/analysis/QualityReportTab";
 import ChatTab from "@/features/chat/ChatTab";
+import { analysisToMarkdown, openPrintWindow } from "@/features/export/exportUtils";
 
 export default function MeetingDetail() {
   const { id } = useParams();
@@ -107,6 +108,16 @@ export default function MeetingDetail() {
   const analysisJson = (analysis?.analysis_json ?? null) as Record<string, unknown> | null;
   const viewConfig = meeting.sectors?.view_config_json ?? null;
 
+  const handleCopyAnalysis = async () => {
+    const md = analysisToMarkdown(bundle, viewConfig);
+    await navigator.clipboard.writeText(md);
+    toast({ title: "Copiado al portapapeles", description: "El análisis está listo para pegar." });
+  };
+
+  const handleExportPdf = () => {
+    openPrintWindow(bundle, viewConfig);
+  };
+
   // Build speaker map
   const speakerMap: Record<string, string> = {};
   speakers.forEach((s) => {
@@ -152,6 +163,26 @@ export default function MeetingDetail() {
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <StatusBadge status={meeting.status} />
+          {analysis && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-1.5">
+                  <Download className="h-3.5 w-3.5" />
+                  Exportar
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={handleCopyAnalysis}>
+                  <Clipboard className="h-4 w-4 mr-2" />
+                  Copiar análisis
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleExportPdf}>
+                  <FileText className="h-4 w-4 mr-2" />
+                  Exportar PDF
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           {(canAnalyze || isProcessing) && (
             <div className="flex items-center">
               <Button onClick={handleAnalyze} disabled={isProcessing} size="sm" className="rounded-r-none">
