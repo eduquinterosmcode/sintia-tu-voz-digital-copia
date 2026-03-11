@@ -388,7 +388,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { meeting_id, mode, user_question } = await req.json();
+    const { meeting_id, mode, user_question, stream } = await req.json();
     if (!meeting_id || !mode) {
       return new Response(JSON.stringify({ error: "Faltan parámetros: meeting_id, mode" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -440,11 +440,14 @@ Deno.serve(async (req) => {
         openaiKey, llmModel, temperature, maxTokens, totalInputTokens, totalOutputTokens, corsHeaders,
       });
     } else if (mode === "chat") {
-      return await handleChat({
+      const chatParams = {
         supabase, meetingId: meeting_id, meeting, user, speakerMap,
         openaiKey, llmModel, temperature, maxTokens, userQuestion: user_question,
         totalInputTokens, totalOutputTokens, corsHeaders,
-      });
+      };
+      return stream === true
+        ? await handleChatStream(chatParams)
+        : await handleChat(chatParams);
     } else {
       return new Response(JSON.stringify({ error: "Modo no válido. Usa 'analyze' o 'chat'" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -793,5 +796,160 @@ PREGUNTA DEL USUARIO: ${userQuestion}`;
 
   return new Response(JSON.stringify({ message: assistantMsg }), {
     status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+// ── Chat Stream Mode ─────────────────────────────────────────────────────────
+// Same RAG logic as handleChat but returns an SSE stream.
+// Events: { type:"chunk", content:string } | { type:"done", message_id, evidence_json, created_at } | { type:"error", message }
+
+async function handleChatStream(p: ChatParams): Promise<Response> {
+  const { supabase, meetingId, meeting, user, speakerMap, openaiKey, llmModel, temperature, maxTokens, userQuestion, corsHeaders } = p;
+
+  if (!userQuestion) {
+    return new Response(JSON.stringify({ error: "Falta user_question para modo chat" }), {
+      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  // Save user message before streaming starts
+  await supabase.from("chat_messages").insert({
+    meeting_id: meetingId, user_id: user.id, role: "user", content: userQuestion,
+  });
+
+  // RAG: same retrieval as handleChat
+  const segments = await getRelevantSegments(supabase, meetingId, openaiKey, userQuestion, 30);
+  const transcriptText = formatSegmentsForPrompt(segments, speakerMap);
+
+  const { data: latestAnalysis } = await supabase
+    .from("meeting_analyses").select("analysis_json").eq("meeting_id", meetingId)
+    .order("version", { ascending: false }).limit(1).single();
+
+  let analysisSummary = "";
+  if (latestAnalysis?.analysis_json) {
+    const aj = latestAnalysis.analysis_json as Record<string, unknown>;
+    if (aj.summary) analysisSummary = `\nRESUMEN DEL ANÁLISIS PREVIO:\n${aj.summary}\n`;
+  }
+
+  const { data: recentMessages } = await supabase
+    .from("chat_messages").select("role, content").eq("meeting_id", meetingId)
+    .order("created_at", { ascending: false }).limit(10);
+
+  const chatHistory = (recentMessages || [])
+    .reverse()
+    .map((m: { role: string; content: string }) => `${m.role === "user" ? "Usuario" : "Asistente"}: ${m.content}`)
+    .join("\n");
+
+  const systemPrompt = `Eres SintIA, asistente profesional de reuniones. Responde en español (Chile).
+Basa tus respuestas ÚNICAMENTE en los segmentos de transcripción proporcionados.
+Para afirmaciones importantes, incluye citas de evidencia con el formato: [Speaker, MM:SS-MM:SS].
+Si la información no está en la transcripción, dilo explícitamente.
+Sé conciso, profesional y accionable.`;
+
+  const userContent = `SEGMENTOS RELEVANTES DE LA TRANSCRIPCIÓN:
+${transcriptText}
+${analysisSummary}
+HISTORIAL RECIENTE:
+${chatHistory}
+
+PREGUNTA DEL USUARIO: ${userQuestion}`;
+
+  const messages = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userContent },
+  ];
+
+  const usesNewParam = /^(gpt-4o|gpt-5|o[1-9])/.test(llmModel);
+  const openaiBody: Record<string, unknown> = {
+    model: llmModel, messages, temperature, stream: true,
+    ...(usesNewParam ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens }),
+  };
+
+  const evidenceJson = segments.slice(0, 5).map((s) => ({
+    speaker: speakerMap[s.speaker_label] || s.speaker_name || s.speaker_label,
+    t_start_sec: s.t_start_sec, t_end_sec: s.t_end_sec, quote: s.text.substring(0, 150),
+  }));
+
+  const encoder = new TextEncoder();
+  const streamBody = new ReadableStream({
+    async start(controller) {
+      const send = (data: unknown) =>
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+
+      try {
+        const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${openaiKey}` },
+          body: JSON.stringify(openaiBody),
+        });
+
+        if (!openaiRes.ok) {
+          const errText = await openaiRes.text();
+          console.error("OpenAI stream error:", openaiRes.status, errText);
+          send({ type: "error", message: `Error LLM: ${openaiRes.status}` });
+          controller.close();
+          return;
+        }
+
+        const reader = openaiRes.body!.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        let fullContent = "";
+        let inputTokens = 0;
+        let outputTokens = 0;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split("\n");
+          buf = lines.pop() ?? "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data: ")) continue;
+            const raw = trimmed.slice(6);
+            if (raw === "[DONE]") continue;
+            try {
+              const parsed = JSON.parse(raw);
+              const delta = parsed.choices?.[0]?.delta?.content;
+              if (delta) { fullContent += delta; send({ type: "chunk", content: delta }); }
+              if (parsed.usage) {
+                inputTokens = parsed.usage.prompt_tokens ?? 0;
+                outputTokens = parsed.usage.completion_tokens ?? 0;
+              }
+            } catch { /* skip malformed chunk */ }
+          }
+        }
+
+        // Persist assistant message after stream completes
+        const { data: assistantMsg } = await supabase
+          .from("chat_messages")
+          .insert({ meeting_id: meetingId, user_id: user.id, role: "assistant", content: fullContent, evidence_json: evidenceJson })
+          .select("id, content, evidence_json, created_at").single();
+
+        // Log usage (non-fatal)
+        supabase.from("usage_events").insert({
+          org_id: meeting.org_id as string, meeting_id: meetingId,
+          kind: "llm", provider: "openai", model: llmModel,
+          units: { input_tokens: inputTokens, output_tokens: outputTokens },
+          cost_estimate_usd: null,
+        }).catch((e: unknown) => console.warn("Usage log failed:", e));
+
+        send({ type: "done", message_id: assistantMsg?.id, evidence_json: assistantMsg?.evidence_json, created_at: assistantMsg?.created_at });
+
+      } catch (err) {
+        console.error("Chat stream error:", err);
+        send({ type: "error", message: err instanceof Error ? err.message : "Error interno" });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(streamBody, {
+    status: 200,
+    headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "X-Accel-Buffering": "no" },
   });
 }

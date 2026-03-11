@@ -177,6 +177,28 @@ export async function listMeetings(orgId: string) {
   return data;
 }
 
+// ── Chat Streaming ───────────────────────────────────────────────────────
+// Returns the raw fetch Response — caller must process the SSE stream.
+// Uses fetch directly (supabase.functions.invoke doesn't support streaming).
+export async function streamChatWithMeeting(meetingId: string, userQuestion: string): Promise<Response> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error("Sesión expirada. Inicia sesión nuevamente.");
+
+  const url = `https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/functions/v1/agent-orchestrator`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ meeting_id: meetingId, mode: "chat", user_question: userQuestion, stream: true }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: `Error ${response.status}` }));
+    throw new Error(err.error || `Error ${response.status}`);
+  }
+  return response;
+}
+
 // ── Org Members ─────────────────────────────────────────────────────────
 export interface OrgMember {
   id: string;
