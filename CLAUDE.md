@@ -121,8 +121,35 @@ Orden decidido el 2026-03-11 después de análisis de brechas para llegar a prod
 | 3 | **Streaming en chat** | ✅ completo | SSE desde `handleChatStream()` en agent-orchestrator. `streamChatWithMeeting()` en apiClient con fetch directo. ChatTab con cursor parpadeante y acumulación en tiempo real. |
 | 4 | **Polling/WebSocket para análisis** | ✅ completo | Fire-and-forget + polling DB-driven. `agent-orchestrator` escribe `status="analyzing"` antes del pipeline LLM. `useMeetingBundle` hace polling cada 3s mientras el status es processing. `MeetingDetail` usa `useRef` para detectar la transición y mostrar toast. El usuario puede navegar libremente. |
 | 5 | **Exportación básica (PDF/copy)** | ✅ completo | Botón "Exportar" (outline) en MeetingDetail, visible cuando hay análisis. "Copiar análisis" → Markdown al portapapeles. "Exportar PDF" → ventana nueva con HTML+estilos inline + `window.print()`. Sin dependencias nuevas. Lógica en `src/features/export/exportUtils.ts`. |
-| 6 | **Búsqueda entre reuniones** | pendiente | Se vuelve necesario con más de ~10 reuniones. Actualmente no hay forma de encontrar contenido histórico. |
+| 6 | **Búsqueda entre reuniones** | **⬅ PRÓXIMO** | Se vuelve necesario con más de ~10 reuniones. Actualmente no hay forma de encontrar contenido histórico. Ver notas de diseño abajo. |
 | 7 | **Diarización automática de speakers** | pendiente | Alta fricción diaria (renombrar SPEAKER_0 manualmente), pero requiere infra adicional (pyannote.audio o servicio externo). Se defer hasta tener Cloud Run activo. |
+
+### Notas de diseño — Ítem 6: Búsqueda entre reuniones
+
+**Qué buscar:** texto libre sobre el contenido de reuniones pasadas (transcripciones + análisis).
+
+**Infraestructura disponible:**
+- `meeting_segments.text_search` — columna `tsvector` (config español) ya existente, usada por el chat RAG.
+- `meeting_segments` tiene índice GIN sobre `text_search` (creado en migración existente).
+- `meeting_analyses.analysis_json` — JSONB, buscable con `jsonb_to_tsvector` o `to_tsvector(analysis_json::text)`.
+- Embeddings semánticos ya existen en `meeting_segments` (roadmap ítem 1, completado).
+
+**Estrategia recomendada — todo en frontend + RPC Postgres:**
+1. Barra de búsqueda global en el Dashboard (o página `/search` dedicada).
+2. Edge Function nueva `search-meetings` o RPC Postgres `search_meetings(query text, org_id uuid)`.
+3. La RPC hace `plainto_tsquery('spanish', query)` sobre `meeting_segments.text_search`, agrupa por `meeting_id`, devuelve: `meeting_id`, `title`, `created_at`, `sector`, `snippet` (fragmento relevante con `ts_headline`).
+4. Opcionalmente combina con búsqueda en `analysis_json` para encontrar reuniones donde el análisis menciona el término.
+5. Resultados: lista de reuniones con snippet resaltado → click navega a `MeetingDetail`.
+
+**RLS:** la RPC debe filtrar por `org_id` del usuario (usar `user_has_org_access(org_id)`).
+
+**Scope mínimo viable:** solo búsqueda full-text sobre transcripciones (segments). La búsqueda semántica (embeddings) queda como mejora posterior.
+
+**Archivos a crear/modificar:**
+- `supabase/migrations/YYYYMMDD_search_meetings_rpc.sql` — función `search_meetings`
+- `supabase/functions/search-meetings/index.ts` — Edge Function (opcional, la RPC puede llamarse directo desde el cliente con `supabase.rpc()`)
+- `src/pages/Dashboard.tsx` — barra de búsqueda + resultados inline o navegación a `/search`
+- `src/services/apiClient.ts` — `searchMeetings(query)` wrapper
 
 ### Brechas conocidas fuera del roadmap inmediato
 - Rate limiter en memoria (no persiste entre instancias) — resolver al activar Cloud Run
