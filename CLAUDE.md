@@ -110,6 +110,30 @@ All Edge Function calls go through `invokeFunction()` which wraps `supabase.func
 
 ---
 
+## Roadmap de producto (priorizado)
+
+Orden decidido el 2026-03-11 después de análisis de brechas para llegar a producto profesional con usuarios reales.
+
+| # | Feature | Estado | Razonamiento |
+|---|---------|--------|--------------|
+| 1 | **Embeddings semánticos en chat** | pendiente | Mayor impacto en calidad de respuestas, cero costo adicional hasta escala. El RAG actual con `tsvector` pierde contexto semántico. |
+| 2 | **Storage policies + RBAC básico** | pendiente | Prerequisito de seguridad antes de mostrar el producto a cualquier usuario externo. La Storage policy actual es permisiva y no hay roles dentro de una org. |
+| 3 | **Streaming en chat** | pendiente | Cambia la percepción del producto — sin streaming las respuestas de 5-10s parecen errores. SSE desde Edge Function. |
+| 4 | **Polling/WebSocket para análisis** | pendiente | El análisis sincrónico con spinner bloqueante es la mayor fricción en el flujo principal. Si el tab se cierra, el usuario no sabe el resultado. |
+| 5 | **Exportación básica (PDF/copy)** | pendiente | Feature más pedido en cualquier tool de reuniones. Ningún usuario profesional vive solo dentro de la app. |
+| 6 | **Búsqueda entre reuniones** | pendiente | Se vuelve necesario con más de ~10 reuniones. Actualmente no hay forma de encontrar contenido histórico. |
+| 7 | **Diarización automática de speakers** | pendiente | Alta fricción diaria (renombrar SPEAKER_0 manualmente), pero requiere infra adicional (pyannote.audio o servicio externo). Se defer hasta tener Cloud Run activo. |
+
+### Brechas conocidas fuera del roadmap inmediato
+- Rate limiter en memoria (no persiste entre instancias) — resolver al activar Cloud Run
+- `cost_estimate_usd` siempre null en `usage_events` — necesario para pricing
+- Flujo de eliminación de datos (LGPD/Ley 19.628) — prerequisito legal antes de público general
+- Cero tests de integración o E2E — riesgo creciente con cada refactor
+- Dashboard usa `useState` en vez de TanStack Query — inconsistencia a resolver
+- `getMeetingBundle` usa raw `fetch` con URL hardcodeada — único llamado fuera de `apiClient.ts`
+
+---
+
 ## Roadmap arquitectónico
 
 ### Estructura objetivo: monorepo
