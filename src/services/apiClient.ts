@@ -214,6 +214,33 @@ export async function getOrgMembers(): Promise<{ members: OrgMember[]; caller_ro
   return data as { members: OrgMember[]; caller_role: string };
 }
 
+// ── Meetings: delete ─────────────────────────────────────────────────────
+export async function deleteMeeting(meetingId: string): Promise<void> {
+  // 1. Fetch storage paths for all audio uploads on this meeting
+  const { data: audioRows } = await supabase
+    .from("meeting_audio")
+    .select("storage_path")
+    .eq("meeting_id", meetingId);
+
+  // 2. Delete audio files from Storage (non-fatal — orphaned files are acceptable)
+  if (audioRows && audioRows.length > 0) {
+    const paths = audioRows.map((r) => r.storage_path);
+    const { error: storageError } = await supabase.storage
+      .from("meeting-audio")
+      .remove(paths);
+    if (storageError) {
+      console.warn("Storage delete failed (non-fatal):", storageError.message);
+    }
+  }
+
+  // 3. Delete meeting row — CASCADE handles all child rows
+  const { error } = await supabase
+    .from("meetings")
+    .delete()
+    .eq("id", meetingId);
+  if (error) throw new Error(error.message);
+}
+
 // ── Search ───────────────────────────────────────────────────────────────
 export interface MeetingSearchResult {
   meeting_id: string;

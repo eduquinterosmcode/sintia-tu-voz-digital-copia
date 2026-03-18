@@ -21,6 +21,7 @@ interface AudioRecorderProps {
 }
 
 const DURATION_WARNING_SEC = 60 * 60; // 60 minutes
+const WHISPER_MAX_BYTES = 25 * 1024 * 1024; // 25 MB — hard limit of Whisper API
 const supportsPause = typeof MediaRecorder !== "undefined" && typeof MediaRecorder.prototype.pause === "function";
 
 /** Pick best supported mimeType with fallback chain */
@@ -48,6 +49,7 @@ export default function AudioRecorder({ meetingId: existingMeetingId, onComplete
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [showWarning, setShowWarning] = useState(false);
+  const [audioBlobTooLarge, setAudioBlobTooLarge] = useState(false);
 
   // Form state (only used when no existingMeetingId)
   const [title, setTitle] = useState("");
@@ -127,6 +129,7 @@ export default function AudioRecorder({ meetingId: existingMeetingId, onComplete
         if (audioUrl) URL.revokeObjectURL(audioUrl);
         setAudioBlob(blob);
         setAudioUrl(URL.createObjectURL(blob));
+        setAudioBlobTooLarge(blob.size > WHISPER_MAX_BYTES);
         setState("stopped");
       };
 
@@ -174,17 +177,25 @@ export default function AudioRecorder({ meetingId: existingMeetingId, onComplete
     setState("idle");
     setDuration(0);
     setShowWarning(false);
+    setAudioBlobTooLarge(false);
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = "";
+    if (file.size > WHISPER_MAX_BYTES) {
+      toast({
+        title: "Archivo demasiado grande",
+        description: `El archivo pesa ${(file.size / (1024 * 1024)).toFixed(1)} MB. El límite de Whisper es 25 MB (~25 minutos de audio). Usa un archivo de menor calidad o recorta la reunión.`,
+        variant: "destructive",
+      });
+      return;
+    }
     // Free previous URL
     if (uploadedFileUrl) URL.revokeObjectURL(uploadedFileUrl);
     setUploadedFile(file);
     setUploadedFileUrl(URL.createObjectURL(file));
-    // Reset file input so the same file can be re-selected
-    e.target.value = "";
   };
 
   const clearUploadedFile = () => {
@@ -197,7 +208,7 @@ export default function AudioRecorder({ meetingId: existingMeetingId, onComplete
   const hasAudioToSave = activeTab === "record" ? !!audioBlob : !!uploadedFile;
   const needsForm = !existingMeetingId;
   const formValid = needsForm ? (title.trim().length > 0 && sectorId.length > 0) : true;
-  const canSave = hasAudioToSave && formValid && !saving;
+  const canSave = hasAudioToSave && formValid && !saving && !audioBlobTooLarge;
 
   const handleSave = useCallback(async () => {
     if (!canSave) return;
@@ -207,6 +218,13 @@ export default function AudioRecorder({ meetingId: existingMeetingId, onComplete
       let targetMeetingId = existingMeetingId;
       let createdNewMeeting = false;
       const blob = activeTab === "record" ? audioBlob! : uploadedFile!;
+
+      // Defense-in-depth: validate size even if UI checks were bypassed
+      if (blob.size > WHISPER_MAX_BYTES) {
+        throw new Error(
+          `El archivo pesa ${(blob.size / (1024 * 1024)).toFixed(1)} MB. El límite de Whisper es 25 MB (~25 minutos de audio). Usa un archivo de menor calidad o recorta la reunión.`
+        );
+      };
       const recordedMime = audioBlob?.type || "audio/webm";
       const filename = activeTab === "record"
         ? `grabacion.${recordedMime.includes("mp4") ? "m4a" : "webm"}`
@@ -279,6 +297,27 @@ export default function AudioRecorder({ meetingId: existingMeetingId, onComplete
   // ── Recording controls ──
   const renderRecordingArea = () => {
     if (state === "stopped" && audioUrl) {
+      if (audioBlobTooLarge) {
+        return (
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 p-3 rounded-md bg-destructive/10 border border-destructive/20 text-destructive">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+              <div className="text-sm">
+                <p className="font-medium">Grabación demasiado larga</p>
+                <p className="text-xs mt-0.5 opacity-90">
+                  El audio grabado pesa {(audioBlob!.size / (1024 * 1024)).toFixed(1)} MB (duración: {formatDuration(duration)}). El límite de Whisper es 25 MB (~25 min). Graba una reunión más corta.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-center">
+              <Button variant="outline" onClick={recordAgain} className="gap-2">
+                <RotateCcw className="h-4 w-4" />
+                Grabar de nuevo
+              </Button>
+            </div>
+          </div>
+        );
+      }
       return (
         <div className="space-y-4">
           <div className="text-center">
@@ -380,7 +419,7 @@ export default function AudioRecorder({ meetingId: existingMeetingId, onComplete
         <div className="space-y-2">
           <Upload className="h-10 w-10 text-muted-foreground/40 mx-auto" />
           <p className="text-sm text-muted-foreground">Selecciona un archivo de audio</p>
-          <p className="text-xs text-muted-foreground">MP3, WAV, M4A, WebM · Máx. 500 MB</p>
+          <p className="text-xs text-muted-foreground">MP3, WAV, M4A, WebM · Máx. 25 MB (~25 min)</p>
         </div>
         <Button variant="outline" onClick={() => fileInputRef.current?.click()} className="gap-2">
           <Upload className="h-4 w-4" />

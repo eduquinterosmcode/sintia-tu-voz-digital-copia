@@ -159,8 +159,20 @@ Orden decidido el 2026-03-11 después de análisis de brechas para llegar a prod
 - Dashboard usa `useState` en vez de TanStack Query — inconsistencia a resolver
 - `getMeetingBundle` usa raw `fetch` con URL hardcodeada — único llamado fuera de `apiClient.ts`
 - **Supabase Storage límite 50MB (plan gratuito)** — archivos de reuniones largas lo superan fácilmente. Opciones: comprimir audio en el cliente antes de subir (Web Audio API / ffmpeg.wasm), o migrar a plan pro cuando haya usuarios reales.
-- **Whisper API límite 25MB por archivo** — reuniones de 40+ minutos fallan con error 400. Solución pendiente: implementar chunking de audio en `stt-transcribe` antes de enviar a Whisper (dividir en fragmentos de ~10 min con overlap de ~5s para no cortar palabras, transcribir en serie, concatenar resultados). Afecta directamente a usuarios con reuniones largas — priorizar antes de público general.
+- **Whisper API límite 25MB por archivo (~25 min de audio)** — solución pendiente: chunking en `stt-transcribe` (dividir en fragmentos de ~10 min con overlap de ~5s, transcribir en serie, concatenar). Requiere Cloud Run activo. **Mitigado para beta:** UI muestra el límite real, validación en cliente bloquea archivos grandes antes de subir, `stt-transcribe` retorna 413 con mensaje descriptivo en lugar de 400 críptico.
 - **Leaked Password Protection deshabilitado** — requiere plan Pro de Supabase (no disponible en gratuito). Activar en Dashboard → Authentication → Settings → "Prevent use of leaked passwords" al migrar a Pro.
+
+### Bloqueadores pre-beta resueltos (2026-03-18)
+
+**1. Límite de 25MB de Whisper — mitigado**
+- `AudioRecorder.tsx`: constante `WHISPER_MAX_BYTES = 25MB`. Archivo subido: validación inmediata en `handleFileSelect` con toast descriptivo. Audio grabado: detección en `recorder.onstop` con banner de error y bloqueo del botón guardar. Defense-in-depth en `handleSave`. Texto UI corregido de "Máx. 500 MB" → "Máx. 25 MB (~25 min)".
+- `stt-transcribe`: check de tamaño post-descarga antes de llamar a Whisper. Retorna 413 con `error_code: "audio_too_large"`, tamaño en MB, y sugerencia de acción. Actualiza status a `error`.
+- La solución definitiva (chunking) queda pendiente hasta Cloud Run.
+
+**2. Eliminación de reuniones**
+- Migración `20260318200000_meeting_delete_policy.sql`: política DELETE en `meetings` + política DELETE en Storage bucket `meeting-audio` para org members.
+- `apiClient.ts`: `deleteMeeting(meetingId)` — busca paths de audio, borra Storage (non-fatal), borra fila meetings (CASCADE elimina todo lo demás).
+- `MeetingDetail.tsx`: botón "Eliminar" con `AlertDialog` de confirmación. Visible en todos los estados de la reunión. Post-confirmación navega a `/dashboard`.
 
 ### Security Advisor — estado (2026-03-18)
 

@@ -1,13 +1,14 @@
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { ArrowLeft, Loader2, Play, RefreshCw, ChevronDown, FileText, RotateCcw, Download, Clipboard } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { ArrowLeft, Loader2, Play, RefreshCw, ChevronDown, FileText, RotateCcw, Download, Clipboard, Trash2 } from "lucide-react";
 import { useMeetingBundle } from "@/hooks/useMeetingBundle";
 import { useQueryClient } from "@tanstack/react-query";
-import { analyzeMeeting, transcribeMeeting } from "@/services/apiClient";
+import { analyzeMeeting, transcribeMeeting, deleteMeeting } from "@/services/apiClient";
 import { useToast } from "@/hooks/use-toast";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import StatusBadge from "@/components/StatusBadge";
 import AudioRecorder from "@/components/AudioRecorder";
 import AudioPlayer from "@/components/AudioPlayer";
@@ -23,6 +24,8 @@ export default function MeetingDetail() {
   const { data: bundle, isLoading, error, refetch } = useMeetingBundle(id);
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const navigate = useNavigate();
+  const [deleting, setDeleting] = useState(false);
   // Track previous status to detect transitions (e.g. analyzing → analyzed)
   const prevStatusRef = useRef<string | undefined>(undefined);
 
@@ -80,6 +83,23 @@ export default function MeetingDetail() {
         description: err instanceof Error ? err.message : "Intenta de nuevo",
         variant: "destructive",
       }));
+  };
+
+  const handleDelete = async () => {
+    if (!id) return;
+    setDeleting(true);
+    try {
+      await deleteMeeting(id);
+      toast({ title: "Reunión eliminada" });
+      navigate("/dashboard");
+    } catch (err) {
+      toast({
+        title: "Error al eliminar",
+        description: err instanceof Error ? err.message : "Intenta de nuevo",
+        variant: "destructive",
+      });
+      setDeleting(false);
+    }
   };
 
   if (isLoading) {
@@ -163,6 +183,28 @@ export default function MeetingDetail() {
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <StatusBadge status={meeting.status} />
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" disabled={deleting}>
+                {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                Eliminar
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>¿Eliminar esta reunión?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Se eliminará el audio, la transcripción y el análisis. Esta acción no se puede deshacer.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                  Sí, eliminar
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
           {analysis && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

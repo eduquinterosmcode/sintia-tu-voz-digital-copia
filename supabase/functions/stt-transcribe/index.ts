@@ -148,6 +148,23 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Validate file size before calling Whisper (hard limit: 25 MB)
+    const WHISPER_MAX_BYTES = 25 * 1024 * 1024;
+    if (audioBlob.size > WHISPER_MAX_BYTES) {
+      const sizeMb = (audioBlob.size / (1024 * 1024)).toFixed(1);
+      console.error(`Audio too large for Whisper: ${sizeMb} MB`);
+      await supabase.from("meetings").update({ status: "error" }).eq("id", meeting_id);
+      return new Response(
+        JSON.stringify({
+          error: `El archivo de audio (${sizeMb} MB) supera el límite de 25 MB de Whisper. Las reuniones de más de ~25 minutos no están soportadas aún. Para reducir el tamaño, usa MP3 a 64 kbps en lugar de WebM.`,
+          error_code: "audio_too_large",
+          size_mb: parseFloat(sizeMb),
+          limit_mb: 25,
+        }),
+        { status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // Get provider settings
     const { data: provSettings } = await supabase
       .from("org_provider_settings")
