@@ -214,6 +214,26 @@ export async function getOrgMembers(): Promise<{ members: OrgMember[]; caller_ro
   return data as { members: OrgMember[]; caller_role: string };
 }
 
+// ── Search ───────────────────────────────────────────────────────────────
+export interface MeetingSearchResult {
+  meeting_id: string;
+  title: string;
+  created_at: string;
+  status: string;
+  sector_name: string;
+  sector_key: string;
+  snippet: string; // HTML con <b>término</b> producido por ts_headline
+}
+
+export async function searchMeetings(query: string, orgId: string): Promise<MeetingSearchResult[]> {
+  const { data, error } = await supabase.rpc("search_meetings", {
+    p_query: query,
+    p_org_id: orgId,
+  });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as MeetingSearchResult[];
+}
+
 // ── Demo ────────────────────────────────────────────────────────────────
 export async function createDemoMeeting(orgId: string, sectorKey: string) {
   const data = await invokeFunction("create-demo-meeting", {

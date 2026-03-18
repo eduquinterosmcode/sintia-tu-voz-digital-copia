@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import DevTestPanel from "@/components/DevTestPanel";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Plus, FileText, Search, Loader2, Sparkles } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useOrganization } from "@/contexts/OrgContext";
-import { createDemoMeeting, analyzeMeeting } from "@/services/apiClient";
+import { createDemoMeeting, analyzeMeeting, searchMeetings, MeetingSearchResult } from "@/services/apiClient";
 import { useToast } from "@/hooks/use-toast";
 import StatusBadge from "@/components/StatusBadge";
 
@@ -27,6 +27,9 @@ export default function Dashboard() {
   const [sectorFilter, setSectorFilter] = useState("all");
   const [sectors, setSectors] = useState<{ id: string; key: string; name: string }[]>([]);
   const [creatingDemo, setCreatingDemo] = useState(false);
+  const [searchResults, setSearchResults] = useState<MeetingSearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -58,6 +61,34 @@ export default function Dashboard() {
   useEffect(() => {
     fetchMeetings();
   }, [org, sectorFilter, sectors]);
+
+  const isFullTextSearch = search.length >= 3;
+
+  useEffect(() => {
+    if (searchDebounce.current) clearTimeout(searchDebounce.current);
+
+    if (!isFullTextSearch || !org) {
+      setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    searchDebounce.current = setTimeout(async () => {
+      try {
+        const results = await searchMeetings(search, org.id);
+        setSearchResults(results);
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 400);
+
+    return () => {
+      if (searchDebounce.current) clearTimeout(searchDebounce.current);
+    };
+  }, [search, org, isFullTextSearch]);
 
   const handleCreateDemo = async () => {
     if (!org || sectors.length === 0) return;
@@ -147,7 +178,7 @@ export default function Dashboard() {
             className="pl-9"
           />
         </div>
-        <Select value={sectorFilter} onValueChange={setSectorFilter}>
+        <Select value={sectorFilter} onValueChange={setSectorFilter} disabled={isFullTextSearch}>
           <SelectTrigger className="w-full sm:w-56">
             <SelectValue placeholder="Todos los sectores" />
           </SelectTrigger>
@@ -160,46 +191,89 @@ export default function Dashboard() {
         </Select>
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="h-6 w-6 animate-spin text-primary" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-center">
-          <FileText className="h-12 w-12 text-muted-foreground/40 mb-4" />
-          <h2 className="font-display text-lg font-semibold text-foreground">Sin reuniones aún</h2>
-          <p className="text-sm text-muted-foreground mt-1">Crea tu primera reunión o prueba con un ejemplo</p>
-          <div className="flex gap-3 mt-4">
-            <Button variant="outline" onClick={handleCreateDemo} disabled={creatingDemo} className="gap-2">
-              <Sparkles className="h-4 w-4" />
-              Probar con ejemplo
-            </Button>
-            <Link to="/meetings/new">
-              <Button>
-                <Plus className="h-4 w-4 mr-2" />
-                Nueva reunión
-              </Button>
-            </Link>
+      {/* Full-text search mode */}
+      {isFullTextSearch ? (
+        isSearching ? (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
           </div>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {filtered.map((m) => (
-            <Link
-              key={m.id}
-              to={`/meetings/${m.id}`}
-              className="flex items-center justify-between p-4 rounded-lg border border-border bg-card hover:bg-secondary/50 transition-colors"
-            >
-              <div className="space-y-1">
-                <h3 className="font-medium text-card-foreground">{m.title}</h3>
-                <p className="text-xs text-muted-foreground">
-                  {m.sectors?.name || "—"} · {new Date(m.created_at).toLocaleDateString("es-CL")}
+        ) : searchResults.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <Search className="h-12 w-12 text-muted-foreground/40 mb-4" />
+            <h2 className="font-display text-lg font-semibold text-foreground">Sin resultados</h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              No se encontró «{search}» en ninguna transcripción
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              {searchResults.length} reunión{searchResults.length !== 1 ? "es" : ""} con «{search}»
+            </p>
+            {searchResults.map((r) => (
+              <Link
+                key={r.meeting_id}
+                to={`/meetings/${r.meeting_id}`}
+                className="block p-4 rounded-lg border border-border bg-card hover:bg-secondary/50 transition-colors"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-medium text-card-foreground">{r.title}</h3>
+                  <StatusBadge status={r.status} />
+                </div>
+                <p className="text-xs text-muted-foreground mb-2">
+                  {r.sector_name} · {new Date(r.created_at).toLocaleDateString("es-CL")}
                 </p>
-              </div>
-              <StatusBadge status={m.status} />
-            </Link>
-          ))}
-        </div>
+                <p
+                  className="text-sm text-muted-foreground leading-relaxed [&_b]:text-foreground [&_b]:font-semibold"
+                  dangerouslySetInnerHTML={{ __html: r.snippet }}
+                />
+              </Link>
+            ))}
+          </div>
+        )
+      ) : (
+        /* Normal list mode */
+        loading ? (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <FileText className="h-12 w-12 text-muted-foreground/40 mb-4" />
+            <h2 className="font-display text-lg font-semibold text-foreground">Sin reuniones aún</h2>
+            <p className="text-sm text-muted-foreground mt-1">Crea tu primera reunión o prueba con un ejemplo</p>
+            <div className="flex gap-3 mt-4">
+              <Button variant="outline" onClick={handleCreateDemo} disabled={creatingDemo} className="gap-2">
+                <Sparkles className="h-4 w-4" />
+                Probar con ejemplo
+              </Button>
+              <Link to="/meetings/new">
+                <Button>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Nueva reunión
+                </Button>
+              </Link>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {filtered.map((m) => (
+              <Link
+                key={m.id}
+                to={`/meetings/${m.id}`}
+                className="flex items-center justify-between p-4 rounded-lg border border-border bg-card hover:bg-secondary/50 transition-colors"
+              >
+                <div className="space-y-1">
+                  <h3 className="font-medium text-card-foreground">{m.title}</h3>
+                  <p className="text-xs text-muted-foreground">
+                    {m.sectors?.name || "—"} · {new Date(m.created_at).toLocaleDateString("es-CL")}
+                  </p>
+                </div>
+                <StatusBadge status={m.status} />
+              </Link>
+            ))}
+          </div>
+        )
       )}
       <DevTestPanel />
     </div>
