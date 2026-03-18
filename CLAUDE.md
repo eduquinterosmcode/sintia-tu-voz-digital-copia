@@ -113,6 +113,7 @@ All Edge Function calls go through `invokeFunction()` which wraps `supabase.func
 ## Roadmap de producto (priorizado)
 
 Orden decidido el 2026-03-11 después de análisis de brechas para llegar a producto profesional con usuarios reales.
+**Estado al 2026-03-18:** ítems 1–6 completos. Bloqueadores pre-beta resueltos (límite Whisper + eliminación de reuniones). App lista para beta cerrada.
 
 | # | Feature | Estado | Razonamiento |
 |---|---------|--------|--------------|
