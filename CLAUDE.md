@@ -160,6 +160,26 @@ Orden decidido el 2026-03-11 después de análisis de brechas para llegar a prod
 - `getMeetingBundle` usa raw `fetch` con URL hardcodeada — único llamado fuera de `apiClient.ts`
 - **Supabase Storage límite 50MB (plan gratuito)** — archivos de reuniones largas lo superan fácilmente. Opciones: comprimir audio en el cliente antes de subir (Web Audio API / ffmpeg.wasm), o migrar a plan pro cuando haya usuarios reales.
 - **Whisper API límite 25MB por archivo** — reuniones de 40+ minutos fallan con error 400. Solución pendiente: implementar chunking de audio en `stt-transcribe` antes de enviar a Whisper (dividir en fragmentos de ~10 min con overlap de ~5s para no cortar palabras, transcribir en serie, concatenar resultados). Afecta directamente a usuarios con reuniones largas — priorizar antes de público general.
+- **Leaked Password Protection deshabilitado** — requiere plan Pro de Supabase (no disponible en gratuito). Activar en Dashboard → Authentication → Settings → "Prevent use of leaked passwords" al migrar a Pro.
+
+### Security Advisor — estado (2026-03-18)
+
+Resueltos en migración `20260318000000_security_advisor_fixes.sql`:
+
+| Severidad | Issue | Resolución |
+|-----------|-------|------------|
+| Error | Security Definer View: `agent_profiles_public` | Vista recreada con `security_invoker=true` |
+| Error | RLS Disabled: `ai_jobs` | RLS habilitado; sin políticas de usuario (acceso solo por service_role/postgres) |
+| Error | RLS Disabled: `meeting_quality_reports` | RLS habilitado + política SELECT para org members |
+| Warning | Function Search Path Mutable: `match_meeting_segments` | `SET search_path TO public, extensions` (pgvector requiere `extensions` en el path) |
+| Warning | Function Search Path Mutable: `ai_jobs_set_updated_at` | `SET search_path = ''` |
+| Warning | Function Search Path Mutable: `quality_reports_set_updated_at` | `SET search_path = ''` |
+
+Pendiente (requiere plan Pro):
+
+| Severidad | Issue | Acción |
+|-----------|-------|--------|
+| Warning | Leaked Password Protection deshabilitado | Dashboard → Authentication → Settings → activar "Prevent use of leaked passwords" |
 
 ---
 
