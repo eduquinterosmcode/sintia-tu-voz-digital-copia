@@ -382,34 +382,43 @@ Campo `activation_rules JSONB` en `agent_profiles`. Backward-compatible: `null` 
 
 **Para agregar un nuevo dominio sin código:** insertar filas en `sectors` + `agent_profiles` (con o sin `activation_rules`) — el orchestrator lo toma automáticamente.
 
-### Fase 6 — Deploy en Cloud Run (DIFERIDA INTENCIONALMENTE — no incurrir en costos GCP mientras se sigue desarrollando)
+### Fase 6 — Deploy en Cloud Run
 
-**Decisión:** El código está 100% listo para deploy. Se difiere el setup de GCP (Artifact Registry, Cloud Run, Secret Manager, service account) para evitar costos mientras el producto sigue en desarrollo activo. Cuando se decida activar, solo se necesita el setup manual descrito abajo — sin cambios de código.
+**Estado (2026-04-05):** Infraestructura GCP completamente configurada. Pendiente: agregar tarjeta de pago en GitHub Billing para habilitar GitHub Actions Minutes — último paso antes del primer deploy automático.
+
+**Infraestructura GCP creada (sintia-production):**
+- Proyecto GCP: `sintia-production`
+- Artifact Registry: repositorio `sintia` en `us-central1`
+- Workload Identity Federation: pool `github-actions`, provider `github`
+- Service Account: `sintia-deploy@sintia-production.iam.gserviceaccount.com`
+  - `roles/run.admin`
+  - `roles/artifactregistry.writer`
+  - `roles/secretmanager.secretAccessor`
+- Secret Manager: `sintia-database-url`, `sintia-openai-key`, `sintia-service-api-key`, `sintia-webhook-secret`
+
+**GitHub Secrets configurados** (Settings > Secrets > Actions):
+| Secret | Descripción |
+|--------|-------------|
+| `GCP_PROJECT_ID` | `sintia-production` |
+| `GCP_REGION` | `us-central1` |
+| `GCP_AR_REPO` | `sintia` |
+| `GCP_SERVICE_ACCOUNT` | Email de la service account `sintia-deploy` |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Resource name completo del provider WIF |
+| `GCP_SA_KEY` | Obsoleto — reemplazado por WIF, puede eliminarse |
+
+**Nota:** El workflow usa Workload Identity Federation (keyless auth) en lugar de JSON key. No hay credenciales de larga duración almacenadas en GitHub. El runner solicita un token OIDC de corta duración que GCP valida contra el repositorio.
 
 **Archivos creados/modificados:**
 - `apps/ai-service/Dockerfile` — `COPY uv.lock` + `CMD` respeta `$PORT` (Cloud Run requiere 8080)
 - `apps/ai-service/src/ai_service/api/webhooks.py` — `POST /webhooks/analysis-completed`
 - `apps/ai-service/src/ai_service/config.py` — campo `webhook_secret`
-- `.github/workflows/deploy-ai-service.yml` — CI/CD: build → push a Artifact Registry → deploy a Cloud Run
-
-**GitHub Secrets requeridos** (Settings > Secrets > Actions):
-| Secret | Descripción |
-|--------|-------------|
-| `GCP_PROJECT_ID` | ID del proyecto GCP |
-| `GCP_REGION` | Región, ej: `us-central1` |
-| `GCP_AR_REPO` | Nombre del repo en Artifact Registry, ej: `sintia` |
-| `GCP_SA_KEY` | JSON completo de la service account key |
+- `.github/workflows/deploy-ai-service.yml` — CI/CD con WIF: build → push Artifact Registry → deploy Cloud Run
 
 **Secrets en GCP Secret Manager** (nombres exactos usados en el workflow):
 - `sintia-database-url` — `DATABASE_URL` asyncpg
 - `sintia-openai-key` — `OPENAI_API_KEY`
 - `sintia-service-api-key` — `SERVICE_API_KEY`
 - `sintia-webhook-secret` — `WEBHOOK_SECRET` (valor libre, guárdalo también en Supabase)
-
-**Service account mínima** (roles necesarios):
-- `roles/run.admin` — deploy Cloud Run
-- `roles/artifactregistry.writer` — push imágenes
-- `roles/secretmanager.secretAccessor` — leer secrets en runtime
 
 **Una vez desplegado — configurar Supabase Database Webhook:**
 1. Supabase Dashboard → Database → Webhooks → Create
