@@ -72,14 +72,20 @@ async def _get_duration(path: Path) -> float:
 # ── Supabase Storage download ─────────────────────────────────────────────────
 
 async def _download_audio(storage_path: str) -> bytes:
-    """Download audio from Supabase Storage using the service role key."""
-    # storage_path format: "meeting-audio/org_id/filename.webm"
-    # Private bucket requires /object/authenticated/ — /object/ returns 400 for non-public buckets
-    url = f"{settings.supabase_url}/storage/v1/object/authenticated/{storage_path}"
+    """Download audio from Supabase Storage using the service role key.
+
+    Uses /object/{path} (not /authenticated/) — the authenticated endpoint is for user JWTs.
+    Service role key requires both Authorization and apikey headers, matching supabase-js behavior.
+    storage_path format: "meeting-audio/org_id/meeting_id/filename.mp3"
+    """
+    url = f"{settings.supabase_url}/storage/v1/object/{storage_path}"
     async with httpx.AsyncClient(timeout=180.0) as client:
         resp = await client.get(
             url,
-            headers={"Authorization": f"Bearer {settings.supabase_service_role_key}"},
+            headers={
+                "Authorization": f"Bearer {settings.supabase_service_role_key}",
+                "apikey": settings.supabase_service_role_key,
+            },
         )
         resp.raise_for_status()
         return resp.content
