@@ -36,10 +36,12 @@ Supabase project ref: `bpzcogoixzxlzaaijdcr`
 React 18 + TypeScript + Vite + Tailwind + shadcn/ui frontend. Supabase (Auth, Postgres, Storage, Edge Functions in Deno) as the entire backend. OpenAI for STT (Whisper / gpt-4o-transcribe) and LLM (GPT-4o).
 
 ### Meeting lifecycle
-Meetings move through a status machine: `draft → uploaded → transcribed → analyzed → error`.
+Meetings move through a status machine: `draft → uploaded → [transcribing →] transcribed → analyzed → error`.
 - **draft**: meeting row created, no audio yet
 - **uploaded**: audio stored in `meeting-audio` bucket, `meeting_audio` row inserted
-- **transcribed**: `stt-transcribe` Edge Function ran, `meeting_transcripts` + `meeting_segments` rows created
+- **transcribing**: audio >25 MB — job enqueued in `ai_jobs`, Python worker processing (chunked path)
+- **transcribed**: transcript ready — either via `stt-transcribe` direct (≤25 MB) or Python worker (>25 MB)
+- **analyzing**: `agent-orchestrator` running the multi-agent pipeline
 - **analyzed**: `agent-orchestrator` ran, `meeting_analyses` row created
 - **error**: STT failed
 
@@ -123,7 +125,7 @@ Orden decidido el 2026-03-11 después de análisis de brechas para llegar a prod
 | 4 | **Polling/WebSocket para análisis** | ✅ completo | Fire-and-forget + polling DB-driven. `agent-orchestrator` escribe `status="analyzing"` antes del pipeline LLM. `useMeetingBundle` hace polling cada 3s mientras el status es processing. `MeetingDetail` usa `useRef` para detectar la transición y mostrar toast. El usuario puede navegar libremente. |
 | 5 | **Exportación básica (PDF/copy)** | ✅ completo | Botón "Exportar" (outline) en MeetingDetail, visible cuando hay análisis. "Copiar análisis" → Markdown al portapapeles. "Exportar PDF" → ventana nueva con HTML+estilos inline + `window.print()`. Sin dependencias nuevas. Lógica en `src/features/export/exportUtils.ts`. |
 | 6 | **Búsqueda entre reuniones** | ✅ completo | RPC `search_meetings` con `plainto_tsquery` sobre índice GIN existente. Dashboard en modo dual: filtro por título (<3 chars) + búsqueda full-text con debounce (≥3 chars). Snippets con términos resaltados via `ts_headline`. |
-| 7 | **Whisper chunking >25 min** | pendiente | Reuniones largas bloqueadas en cliente (>25MB). Solución: chunking en `stt-transcribe` (Deno), fragmentos ~10 min con overlap ~5s, transcribir en serie, concatenar timestamps. Cloud Run activo — bloqueador resuelto. |
+| 7 | **Whisper chunking >25 min** | ✅ completo | `stt-transcribe` detecta >25 MB y encola job `transcribe_audio` en `ai_jobs`. Python worker (`handlers/transcribe.py`): download Storage → ffmpeg (16kHz mono MP3) → chunks 10min+5s overlap → whisper-1 en serie → merge timestamps → embeddings → INSERT transcripts+segments. Status `transcribing` activa polling automático en frontend. |
 | 8 | **Diarización automática de speakers** | pendiente | Alta fricción diaria (renombrar SPEAKER_0 manualmente). Decisión pendiente: pyannote.audio self-hosted (gratis, ~2GB RAM, sin GPU) vs Deepgram ($0.26/h) vs AssemblyAI ($0.37/h). Cloud Run activo — bloqueador resuelto. |
 | 9 | **Migración especialistas Deno → agentes Python reales** | pendiente | Especialistas actuales son LLM calls directas. Objetivo: Agent-as-Tool pattern con OpenAI Agents SDK. Orden: sector Negocios primero → validar → migrar sector por sector → retirar Deno. |
 | 10 | **Tests de integración** | pendiente | Pipeline largo sin cobertura (frontend → Edge Function → Postgres → webhook → Cloud Run → agente). Implementar después de ítem 9 cuando la arquitectura esté estable. Mínimo: un test por Edge Function crítica + validación de job queue end-to-end. |
@@ -232,7 +234,8 @@ apps/ai-service/
 │   ├── agents/
 │   │   └── auditor/     # AnalysisAuditor — ver sección "Agente crítico"
 │   ├── handlers/
-│   │   └── registry.py  # @register_handler("tipo") — punto de extensión
+│   │   ├── registry.py   # @register_handler("tipo") — punto de extensión
+│   │   └── transcribe.py # transcribe_audio — chunked STT para audio >25 MB
 │   └── api/
 │       ├── health.py    # GET /health, GET /health/db (sin auth)
 │       ├── audit.py     # POST+GET /audit/{meeting_id} (SERVICE_API_KEY)
@@ -261,6 +264,12 @@ async def handle(job: JobRow) -> None:
 ```
 Registrar un nuevo tipo de job = una función decorada. Sin cambios al worker ni al router.
 Agregar el import en `handlers/__init__.py` para que se registre al startup.
+
+**Handlers registrados actualmente:**
+| Job type | Archivo | Trigger |
+|----------|---------|---------|
+| `audit_analysis` | `agents/auditor/handler.py` | Deno post-análisis (INSERT meeting_analyses) vía Supabase Webhook |
+| `transcribe_audio` | `handlers/transcribe.py` | `stt-transcribe` Deno cuando audio >25 MB |
 
 **Auth:** `SERVICE_API_KEY` estático (bearer token) en todos los endpoints excepto `/health`. Supabase JWT se agrega cuando el servicio sea llamado externamente.
 
