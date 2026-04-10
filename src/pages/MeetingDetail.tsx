@@ -161,7 +161,8 @@ export default function MeetingDetail() {
   });
 
   const isProcessing = meeting.status === "analyzing" || meeting.status === "transcribing";
-  const canAnalyze = (meeting.status === "transcribed" || meeting.status === "analyzed" || meeting.status === "uploaded") && (segments.length > 0 || meeting.status === "uploaded");
+  // "error" with existing segments means a re-transcription failed but the transcript is still valid
+  const canAnalyze = (meeting.status === "transcribed" || meeting.status === "analyzed" || meeting.status === "uploaded" || (meeting.status === "error" && segments.length > 0)) && (segments.length > 0 || meeting.status === "uploaded");
   const hasTranscript = segments.length > 0;
 
   const fmtDate = (iso: string) =>

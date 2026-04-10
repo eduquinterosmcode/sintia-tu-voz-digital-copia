@@ -217,7 +217,12 @@ Deno.serve(async (req) => {
     const language = meeting.language || "es";
     const isWhisper = sttModel.startsWith("whisper");
 
-    // Update status
+    // Save current status so we can restore it on failure (e.g. re-transcribing a "transcribed" meeting)
+    const { data: currentMeeting } = await supabase
+      .from("meetings").select("status").eq("id", meeting_id).single();
+    const previousStatus = currentMeeting?.status ?? "uploaded";
+
+    // Signal that transcription is in progress
     await supabase.from("meetings").update({ status: "uploaded" }).eq("id", meeting_id);
 
     // Call OpenAI transcription
@@ -243,7 +248,10 @@ Deno.serve(async (req) => {
     if (!sttResponse.ok) {
       const errText = await sttResponse.text();
       console.error("OpenAI STT error:", sttResponse.status, errText);
-      await supabase.from("meetings").update({ status: "error" }).eq("id", meeting_id);
+      // If there was already a valid transcript, restore previous status so the user can still analyze.
+      // Only set "error" when starting fresh (previousStatus was uploaded/draft).
+      const rollbackStatus = (previousStatus === "transcribed" || previousStatus === "analyzed") ? previousStatus : "error";
+      await supabase.from("meetings").update({ status: rollbackStatus }).eq("id", meeting_id);
       return new Response(
         JSON.stringify({ error: `Error de transcripción: ${sttResponse.status}`, detail: errText }),
         { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
