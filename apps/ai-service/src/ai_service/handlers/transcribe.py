@@ -74,7 +74,8 @@ async def _get_duration(path: Path) -> float:
 async def _download_audio(storage_path: str) -> bytes:
     """Download audio from Supabase Storage using the service role key."""
     # storage_path format: "meeting-audio/org_id/filename.webm"
-    url = f"{settings.supabase_url}/storage/v1/object/{storage_path}"
+    # Private bucket requires /object/authenticated/ — /object/ returns 400 for non-public buckets
+    url = f"{settings.supabase_url}/storage/v1/object/authenticated/{storage_path}"
     async with httpx.AsyncClient(timeout=180.0) as client:
         resp = await client.get(
             url,

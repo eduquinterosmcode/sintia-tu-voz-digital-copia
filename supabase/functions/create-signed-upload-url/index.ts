@@ -60,7 +60,14 @@ Deno.serve(async (req) => {
       });
     }
 
-    const storagePath = `${meeting.org_id}/${meeting_id}/${crypto.randomUUID()}-${filename}`;
+    // Sanitize filename: Supabase Storage keys only allow alphanumeric, hyphens, underscores, and dots.
+    // Spaces, brackets, and other special chars cause an "InvalidKey" 400 error.
+    const safeFilename = filename
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // strip diacritics
+      .replace(/[^a-zA-Z0-9._-]/g, "_")                // replace invalid chars with _
+      .replace(/_+/g, "_")                              // collapse consecutive underscores
+      .slice(0, 100);                                   // cap length
+    const storagePath = `${meeting.org_id}/${meeting_id}/${crypto.randomUUID()}-${safeFilename}`;
 
     const { data: signedData, error: signedError } = await supabase.storage
       .from("meeting-audio").createSignedUploadUrl(storagePath);

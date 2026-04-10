@@ -149,7 +149,8 @@ Deno.serve(async (req) => {
     }
 
     // Files > 25 MB cannot be sent directly to Whisper — route to Python chunked worker
-    const WHISPER_MAX_BYTES = 25 * 1024 * 1024;
+    // ⚠️ TEMP (e2e test): threshold lowered to 15 MB. Revert to 25 * 1024 * 1024 after test.
+    const WHISPER_MAX_BYTES = 15 * 1024 * 1024;
     if (audioBlob.size > WHISPER_MAX_BYTES) {
       const sizeMb = (audioBlob.size / (1024 * 1024)).toFixed(1);
       console.log(`Audio (${sizeMb} MB) exceeds Whisper limit — enqueuing chunked transcription job`);

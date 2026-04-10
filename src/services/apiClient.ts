@@ -45,18 +45,22 @@ export async function getSignedUploadUrl(meetingId: string, filename: string, mi
 
 export async function uploadAudioToStorage(
   signedUrl: string,
-  token: string,
+  _token: string,
   file: Blob,
   mimeType: string
 ) {
+  // The signed URL already embeds the upload token as a query param (?token=xxx).
+  // Do NOT pass Authorization here — Supabase Storage would try to validate it as a
+  // user JWT, fail, and return 400. Only Content-Type is needed.
   const res = await fetch(signedUrl, {
     method: "PUT",
-    headers: { "Content-Type": mimeType, Authorization: `Bearer ${token}` },
+    headers: { "Content-Type": mimeType },
     body: file,
   });
   if (!res.ok) {
+    const detail = await res.text().catch(() => "");
     if (res.status === 403) throw new Error("Error de permisos al subir audio. Verifica las políticas de storage.");
-    throw new Error(`Error al subir audio: ${res.status}`);
+    throw new Error(`Error al subir audio: ${res.status}${detail ? ` — ${detail}` : ""}`);
   }
 }
 
