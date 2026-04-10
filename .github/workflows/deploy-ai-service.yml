@@ -61,7 +61,8 @@ jobs:
             --max-instances 3 \
             --memory 1Gi \
             --cpu 1 \
-            --timeout 300 \
+            --no-cpu-throttling \
+            --timeout 3600 \
             --set-secrets \
               "DATABASE_URL=sintia-database-url:latest,\
               OPENAI_API_KEY=sintia-openai-key:latest,\

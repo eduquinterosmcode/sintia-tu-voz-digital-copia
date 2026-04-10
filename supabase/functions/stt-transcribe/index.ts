@@ -149,8 +149,7 @@ Deno.serve(async (req) => {
     }
 
     // Files > 25 MB cannot be sent directly to Whisper — route to Python chunked worker
-    // ⚠️ TEMP (e2e test): threshold lowered to 15 MB. Revert to 25 * 1024 * 1024 after test.
-    const WHISPER_MAX_BYTES = 15 * 1024 * 1024;
+    const WHISPER_MAX_BYTES = 25 * 1024 * 1024;
     if (audioBlob.size > WHISPER_MAX_BYTES) {
       const sizeMb = (audioBlob.size / (1024 * 1024)).toFixed(1);
       console.log(`Audio (${sizeMb} MB) exceeds Whisper limit — enqueuing chunked transcription job`);
@@ -187,6 +186,15 @@ Deno.serve(async (req) => {
 
       // "transcribing" is in PROCESSING_STATUSES — the frontend polls automatically
       await supabase.from("meetings").update({ status: "transcribing" }).eq("id", meeting_id);
+
+      // Wake up Cloud Run worker (min-instances=0 — instance may be sleeping).
+      // Fire-and-forget: if the ping fails the job will be picked up on the next poll cycle.
+      const aiServiceUrl = Deno.env.get("AI_SERVICE_URL");
+      if (aiServiceUrl) {
+        fetch(`${aiServiceUrl}/health`).catch((e) =>
+          console.warn("Cloud Run wake-up ping failed (non-fatal):", e)
+        );
+      }
 
       return new Response(
         JSON.stringify({
