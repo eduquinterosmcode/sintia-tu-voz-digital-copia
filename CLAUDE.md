@@ -165,15 +165,15 @@ Orden decidido el 2026-03-11 después de análisis de brechas para llegar a prod
 - Dashboard usa `useState` en vez de TanStack Query — inconsistencia a resolver
 - `getMeetingBundle` usa raw `fetch` con URL hardcodeada — único llamado fuera de `apiClient.ts`
 - **Supabase Storage límite 50MB (plan gratuito)** — archivos de reuniones largas lo superan fácilmente. Opciones: comprimir audio en el cliente antes de subir (Web Audio API / ffmpeg.wasm), o migrar a plan pro cuando haya usuarios reales.
-- **Whisper API límite 25MB por archivo (~25 min de audio)** — solución pendiente: chunking en `stt-transcribe` (dividir en fragmentos de ~10 min con overlap de ~5s, transcribir en serie, concatenar). Requiere Cloud Run activo. **Mitigado para beta:** UI muestra el límite real, validación en cliente bloquea archivos grandes antes de subir, `stt-transcribe` retorna 413 con mensaje descriptivo en lugar de 400 críptico.
+- **Archivos de YouTube / formato no estándar en sync path** — archivos .mp3 descargados de YouTube suelen ser contenedores M4A/AAC internamente. Whisper los rechaza con 400 en el sync path (Deno, ≤25 MB). El chunked path Python funciona porque ffmpeg los normaliza. Fix pendiente: convertir con ffmpeg en `stt-transcribe` antes de enviar a Whisper. Por ahora: si falla Whisper y había transcripción previa, el status se restaura (no queda en "error").
 - **Leaked Password Protection deshabilitado** — requiere plan Pro de Supabase (no disponible en gratuito). Activar en Dashboard → Authentication → Settings → "Prevent use of leaked passwords" al migrar a Pro.
 
-### Bloqueadores pre-beta resueltos (2026-03-18)
+### Bloqueadores pre-beta resueltos (2026-03-18 y 2026-04-10)
 
-**1. Límite de 25MB de Whisper — mitigado**
-- `AudioRecorder.tsx`: constante `WHISPER_MAX_BYTES = 25MB`. Archivo subido: validación inmediata en `handleFileSelect` con toast descriptivo. Audio grabado: detección en `recorder.onstop` con banner de error y bloqueo del botón guardar. Defense-in-depth en `handleSave`. Texto UI corregido de "Máx. 500 MB" → "Máx. 25 MB (~25 min)".
-- `stt-transcribe`: check de tamaño post-descarga antes de llamar a Whisper. Retorna 413 con `error_code: "audio_too_large"`, tamaño en MB, y sugerencia de acción. Actualiza status a `error`.
-- La solución definitiva (chunking) queda pendiente hasta Cloud Run.
+**1. Límite de 25MB de Whisper — RESUELTO (2026-04-10)**
+- Chunked transcription vía Python worker: `stt-transcribe` detecta >25 MB, encola job `transcribe_audio` en `ai_jobs`, Python worker descarga → ffmpeg → chunks 10min+5s overlap → whisper-1 → merge → embeddings → DB.
+- Status `transcribing` activa polling automático en frontend (aparece automáticamente cuando termina).
+- Wake-up ping a Cloud Run (`AI_SERVICE_URL` secret en Supabase) para evitar que el job quede pendiente si la instancia está dormida.
 
 **2. Eliminación de reuniones**
 - Migración `20260318200000_meeting_delete_policy.sql`: política DELETE en `meetings` + política DELETE en Storage bucket `meeting-audio` para org members.
@@ -278,6 +278,8 @@ Agregar el import en `handlers/__init__.py` para que se registre al startup.
 **Gotchas conocidos (encontrados en e2e):**
 - **asyncpg + `::jsonb`**: el operador de cast `::` de PostgreSQL choca con el parser de params nombrados de SQLAlchemy/asyncpg. Siempre usar `CAST(:param AS jsonb)` en queries `text()` — nunca `:param::jsonb`.
 - **`OPENAI_API_KEY` no propagada**: `pydantic-settings` lee `.env` en el objeto `settings` pero NO setea `os.environ`. El SDK de OpenAI y `openai-agents` leen directamente de `os.environ`. Fix en `main.py`: `os.environ.setdefault("OPENAI_API_KEY", settings.openai_api_key)` al inicio del módulo.
+- **Supabase Storage download (Python)**: usar `GET /storage/v1/object/{storage_path}` con headers `Authorization: Bearer {service_role_key}` + `apikey: {service_role_key}`. El endpoint `/object/authenticated/` es solo para user JWT, no service role. Ambos headers son necesarios (igual que hace supabase-js internamente).
+- **Cloud Run CPU throttling**: sin `--no-cpu-throttling` en el deploy, Cloud Run **suspende el proceso completo** cuando no hay requests HTTP activos. El ffmpeg y cualquier work CPU-intensivo queda congelado indefinidamente. El flag es obligatorio para background workers.
 
 ### Agente crítico independiente — `AnalysisAuditor` (implementado)
 
@@ -397,7 +399,15 @@ Campo `activation_rules JSONB` en `agent_profiles`. Backward-compatible: `null` 
 
 ### Fase 6 — Deploy en Cloud Run
 
-**Estado (2026-04-07): COMPLETA y validada e2e.** Cloud Run activo en `https://sintia-ai-service-hsimetvv7q-uc.a.run.app`. Webhook Supabase configurado (meeting_analyses INSERT → /webhooks/analysis-completed). Flujo completo validado: análisis → webhook → job en ai_jobs → reporte en meeting_quality_reports → tab "Calidad" en la app. Permisos IAM resueltos: Cloud Run Admin API habilitada, iam.serviceAccountUser y secretmanager.secretAccessor en default compute SA.
+**Estado (2026-04-10): COMPLETA y validada e2e.** Cloud Run activo en `https://sintia-ai-service-hsimetvv7q-uc.a.run.app`. Webhook Supabase configurado (meeting_analyses INSERT → /webhooks/analysis-completed). Flujo completo validado: análisis → webhook → job en ai_jobs → reporte en meeting_quality_reports → tab "Calidad" en la app.
+
+**Configuración actual del deploy:**
+- `--no-cpu-throttling` — **crítico para background workers**. Sin esto, Cloud Run suspende el proceso entre peticiones HTTP, congelando ffmpeg y operaciones CPU-intensivas indefinidamente.
+- `--timeout 3600` — necesario para transcripciones largas (default 300 era insuficiente).
+- `--min-instances 0` — escala a 0 para ahorrar costo. El wake-up se hace vía ping desde `stt-transcribe` usando el secret `AI_SERVICE_URL`.
+
+**Secret adicional en Supabase Edge Functions:**
+- `AI_SERVICE_URL = https://sintia-ai-service-hsimetvv7q-uc.a.run.app` — usado por stt-transcribe para despertar Cloud Run al encolar un job.
 
 **Infraestructura GCP creada (sintia-production):**
 - Proyecto GCP: `sintia-production`
