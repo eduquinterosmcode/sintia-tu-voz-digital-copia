@@ -79,11 +79,16 @@ export async function saveMeetingAudio(
 export async function transcribeMeeting(meetingId: string) {
   const data = await invokeFunction("stt-transcribe", { meeting_id: meetingId });
   return data as {
-    transcript_id: string;
-    version: number;
-    segments_count: number;
-    duration: number;
-    speaker_map: Record<string, string>;
+    // Synchronous path (file ≤ 25 MB)
+    transcript_id?: string;
+    version?: number;
+    segments_count?: number;
+    duration?: number;
+    speaker_map?: Record<string, string>;
+    // Async path (file > 25 MB — job enqueued, Python worker handles it)
+    queued?: boolean;
+    message?: string;
+    size_mb?: number;
   };
 }
 

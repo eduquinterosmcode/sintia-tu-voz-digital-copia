@@ -59,14 +59,16 @@ jobs:
             --port 8080 \
             --min-instances 0 \
             --max-instances 3 \
-            --memory 512Mi \
+            --memory 1Gi \
             --cpu 1 \
             --timeout 300 \
             --set-secrets \
               "DATABASE_URL=sintia-database-url:latest,\
               OPENAI_API_KEY=sintia-openai-key:latest,\
               SERVICE_API_KEY=sintia-service-api-key:latest,\
-              WEBHOOK_SECRET=sintia-webhook-secret:latest" \
+              WEBHOOK_SECRET=sintia-webhook-secret:latest,\
+              SUPABASE_URL=sintia-supabase-url:latest,\
+              SUPABASE_SERVICE_ROLE_KEY=sintia-supabase-service-role-key:latest" \
             --set-env-vars "ENVIRONMENT=production,LOG_LEVEL=INFO"
 
       - name: Show service URL

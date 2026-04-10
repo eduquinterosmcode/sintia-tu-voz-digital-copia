@@ -148,20 +148,52 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Validate file size before calling Whisper (hard limit: 25 MB)
+    // Files > 25 MB cannot be sent directly to Whisper — route to Python chunked worker
     const WHISPER_MAX_BYTES = 25 * 1024 * 1024;
     if (audioBlob.size > WHISPER_MAX_BYTES) {
       const sizeMb = (audioBlob.size / (1024 * 1024)).toFixed(1);
-      console.error(`Audio too large for Whisper: ${sizeMb} MB`);
-      await supabase.from("meetings").update({ status: "error" }).eq("id", meeting_id);
+      console.log(`Audio (${sizeMb} MB) exceeds Whisper limit — enqueuing chunked transcription job`);
+
+      const { error: jobError } = await supabase
+        .from("ai_jobs")
+        .upsert(
+          {
+            job_type: "transcribe_audio",
+            payload: {
+              meeting_id,
+              storage_path: `meeting-audio/${audio.storage_path}`,
+              mime_type: audio.mime_type || "audio/webm",
+              language: meeting.language || "es",
+              stt_model: "whisper-1",
+              user_id: user.id,
+              org_id: meeting.org_id,
+            },
+            status: "pending",
+            idempotency_key: `transcribe_audio:${meeting_id}`,
+            max_attempts: 3,
+          },
+          { onConflict: "idempotency_key", ignoreDuplicates: true }
+        );
+
+      if (jobError) {
+        console.error("Failed to enqueue transcribe_audio job:", jobError);
+        await supabase.from("meetings").update({ status: "error" }).eq("id", meeting_id);
+        return new Response(
+          JSON.stringify({ error: "Error al encolar la transcripción", detail: jobError.message }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // "transcribing" is in PROCESSING_STATUSES — the frontend polls automatically
+      await supabase.from("meetings").update({ status: "transcribing" }).eq("id", meeting_id);
+
       return new Response(
         JSON.stringify({
-          error: `El archivo de audio (${sizeMb} MB) supera el límite de 25 MB de Whisper. Las reuniones de más de ~25 minutos no están soportadas aún. Para reducir el tamaño, usa MP3 a 64 kbps en lugar de WebM.`,
-          error_code: "audio_too_large",
+          queued: true,
+          message: `Reunión de ${sizeMb} MB en cola. La transcripción puede tomar varios minutos — aparecerá automáticamente cuando esté lista.`,
           size_mb: parseFloat(sizeMb),
-          limit_mb: 25,
         }),
-        { status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 

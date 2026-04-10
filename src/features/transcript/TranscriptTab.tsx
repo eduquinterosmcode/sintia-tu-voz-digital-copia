@@ -44,8 +44,13 @@ export default function TranscriptTab({ meetingId, segments, speakers, hasAudio,
     setTranscribing(true);
     try {
       const result = await transcribeMeeting(meetingId);
-      toast({ title: "Transcripción completada", description: `${result.segments_count} segmentos generados` });
-      onRefresh();
+      if (result.queued) {
+        toast({ title: "Reunión en cola", description: result.message });
+        // Polling in useMeetingBundle handles the update — no manual refresh needed
+      } else {
+        toast({ title: "Transcripción completada", description: `${result.segments_count} segmentos generados` });
+        onRefresh();
+      }
     } catch (err) {
       toast({
         title: "Error de transcripción",

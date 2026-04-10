@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     # OpenAI
     openai_api_key: str
 
+    # Supabase — needed to download audio from Storage
+    supabase_url: str
+    supabase_service_role_key: str
+
     # Internal auth — static bearer token for Edge Function proxy calls
     service_api_key: str
 

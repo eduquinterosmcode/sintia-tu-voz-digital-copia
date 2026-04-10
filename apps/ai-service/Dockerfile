@@ -15,6 +15,9 @@ FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
+# ffmpeg is required for audio chunking (Whisper >25 min support)
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+
 # Copy venv from builder
 COPY --from=builder /app/.venv /app/.venv
 COPY src/ src/

@@ -33,9 +33,12 @@ export default function MeetingDetail() {
     queryClient.invalidateQueries({ queryKey: ["meeting-bundle", id] });
   };
 
-  // Toast when analysis completes (status transition detected via polling)
+  // Toast when transcription or analysis completes (status transitions detected via polling)
   useEffect(() => {
     const currentStatus = bundle?.meeting?.status;
+    if (prevStatusRef.current === "transcribing" && currentStatus === "transcribed") {
+      toast({ title: "Transcripción completada", description: "La reunión ya está transcrita. Puedes analizarla." });
+    }
     if (prevStatusRef.current === "analyzing" && currentStatus === "analyzed") {
       toast({ title: "Análisis completado", description: "Los resultados están listos." });
     }
@@ -54,7 +57,15 @@ export default function MeetingDetail() {
     if (needsTranscription) {
       toast({ title: "Procesando en segundo plano", description: "Transcripción → análisis. Puedes seguir navegando." });
       transcribeMeeting(id)
-        .then(() => analyzeMeeting(id))
+        .then((result) => {
+          if (result.queued) {
+            // Large file — Python worker handles chunked transcription.
+            // Polling via useMeetingBundle ("transcribing" status) will notify when done.
+            toast({ title: "Reunión en cola", description: result.message });
+            return;
+          }
+          return analyzeMeeting(id);
+        })
         .catch((err) => toast({
           title: "Error al procesar",
           description: err instanceof Error ? err.message : "Intenta de nuevo",
@@ -74,9 +85,14 @@ export default function MeetingDetail() {
     if (!id) return;
     toast({ title: "Transcripción iniciada", description: "Puedes seguir navegando mientras se procesa." });
     transcribeMeeting(id)
-      .then(() => {
-        toast({ title: "Transcripción completada", description: "Puedes revisar la transcripción." });
-        refetch();
+      .then((result) => {
+        if (result.queued) {
+          toast({ title: "Reunión en cola", description: result.message });
+          // Polling handles the rest — no manual refetch needed
+        } else {
+          toast({ title: "Transcripción completada", description: "Puedes revisar la transcripción." });
+          refetch();
+        }
       })
       .catch((err) => toast({
         title: "Error en transcripción",

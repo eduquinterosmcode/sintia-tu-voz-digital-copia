@@ -113,7 +113,7 @@ All Edge Function calls go through `invokeFunction()` which wraps `supabase.func
 ## Roadmap de producto (priorizado)
 
 Orden decidido el 2026-03-11 después de análisis de brechas para llegar a producto profesional con usuarios reales.
-**Estado al 2026-03-18:** ítems 1–6 completos. Bloqueadores pre-beta resueltos (límite Whisper + eliminación de reuniones). App lista para beta cerrada.
+**Estado al 2026-04-07:** ítems 1–6 completos. Cloud Run activo (Fase 6 completa). Webhook Supabase configurado y validado e2e. App lista para beta cerrada.
 
 | # | Feature | Estado | Razonamiento |
 |---|---------|--------|--------------|
@@ -123,7 +123,10 @@ Orden decidido el 2026-03-11 después de análisis de brechas para llegar a prod
 | 4 | **Polling/WebSocket para análisis** | ✅ completo | Fire-and-forget + polling DB-driven. `agent-orchestrator` escribe `status="analyzing"` antes del pipeline LLM. `useMeetingBundle` hace polling cada 3s mientras el status es processing. `MeetingDetail` usa `useRef` para detectar la transición y mostrar toast. El usuario puede navegar libremente. |
 | 5 | **Exportación básica (PDF/copy)** | ✅ completo | Botón "Exportar" (outline) en MeetingDetail, visible cuando hay análisis. "Copiar análisis" → Markdown al portapapeles. "Exportar PDF" → ventana nueva con HTML+estilos inline + `window.print()`. Sin dependencias nuevas. Lógica en `src/features/export/exportUtils.ts`. |
 | 6 | **Búsqueda entre reuniones** | ✅ completo | RPC `search_meetings` con `plainto_tsquery` sobre índice GIN existente. Dashboard en modo dual: filtro por título (<3 chars) + búsqueda full-text con debounce (≥3 chars). Snippets con términos resaltados via `ts_headline`. |
-| 7 | **Diarización automática de speakers** | pendiente | Alta fricción diaria (renombrar SPEAKER_0 manualmente), pero requiere infra adicional (pyannote.audio o servicio externo). Se defer hasta tener Cloud Run activo. |
+| 7 | **Whisper chunking >25 min** | pendiente | Reuniones largas bloqueadas en cliente (>25MB). Solución: chunking en `stt-transcribe` (Deno), fragmentos ~10 min con overlap ~5s, transcribir en serie, concatenar timestamps. Cloud Run activo — bloqueador resuelto. |
+| 8 | **Diarización automática de speakers** | pendiente | Alta fricción diaria (renombrar SPEAKER_0 manualmente). Decisión pendiente: pyannote.audio self-hosted (gratis, ~2GB RAM, sin GPU) vs Deepgram ($0.26/h) vs AssemblyAI ($0.37/h). Cloud Run activo — bloqueador resuelto. |
+| 9 | **Migración especialistas Deno → agentes Python reales** | pendiente | Especialistas actuales son LLM calls directas. Objetivo: Agent-as-Tool pattern con OpenAI Agents SDK. Orden: sector Negocios primero → validar → migrar sector por sector → retirar Deno. |
+| 10 | **Tests de integración** | pendiente | Pipeline largo sin cobertura (frontend → Edge Function → Postgres → webhook → Cloud Run → agente). Implementar después de ítem 9 cuando la arquitectura esté estable. Mínimo: un test por Edge Function crítica + validación de job queue end-to-end. |
 
 ### Notas de diseño — Ítem 6: Búsqueda entre reuniones
 
@@ -292,7 +295,8 @@ agents/auditor/
 ├── agent.py       # Agent[AuditorContext] + search_transcript() tool
 ├── repository.py  # fetch_meeting_data(), save_report(), get_report()
 └── handler.py     # @register_handler("audit_analysis")
-api/audit.py       # POST /audit/{meeting_id}, GET /audit/{meeting_id}
+api/webhooks.py    # POST /webhooks/analysis-completed (trigger vía Supabase Webhook)
+                   # Nota: el trigger manual POST /audit/{meeting_id} encola job vía la misma queue
 migrations/002_create_meeting_quality_reports.sql
 ```
 
@@ -384,7 +388,7 @@ Campo `activation_rules JSONB` en `agent_profiles`. Backward-compatible: `null` 
 
 ### Fase 6 — Deploy en Cloud Run
 
-**Estado (2026-04-05):** Infraestructura GCP completamente configurada. Pendiente: agregar tarjeta de pago en GitHub Billing para habilitar GitHub Actions Minutes — último paso antes del primer deploy automático.
+**Estado (2026-04-07): COMPLETA y validada e2e.** Cloud Run activo en `https://sintia-ai-service-hsimetvv7q-uc.a.run.app`. Webhook Supabase configurado (meeting_analyses INSERT → /webhooks/analysis-completed). Flujo completo validado: análisis → webhook → job en ai_jobs → reporte en meeting_quality_reports → tab "Calidad" en la app. Permisos IAM resueltos: Cloud Run Admin API habilitada, iam.serviceAccountUser y secretmanager.secretAccessor en default compute SA.
 
 **Infraestructura GCP creada (sintia-production):**
 - Proyecto GCP: `sintia-production`
