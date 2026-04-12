@@ -567,3 +567,44 @@ agents/
 6. Retirar el orquestador Deno
 
 El enrutamiento sector por sector se hace en `agent-orchestrator` Deno: si `sector.key` está en la lista de sectores migrados, delegar al Python service via HTTP (una vez que esté en Cloud Run); si no, usar el pipeline Deno existente.
+
+---
+
+## Deuda técnica — revisión sesión 4 (2026-04-12)
+
+Revisión completa del código realizada en sesión 4. Hallazgos organizados por severidad. Los marcados ✅ fueron resueltos en esta misma sesión.
+
+### ALTA — resolver antes del lanzamiento público
+
+| ID | Archivo | Problema | Estado |
+|----|---------|----------|--------|
+| A1 | `src/pages/Dashboard.tsx:228` | `dangerouslySetInnerHTML` con snippets de `ts_headline` — XSS potencial si PostgreSQL no escapa HTML correctamente | ✅ resuelto sesión 4 |
+| A2 | `supabase/functions/stt-transcribe/index.ts` | Si `generateEmbeddings()` falla, los segmentos se guardan sin embeddings sin ningún log. El chat RAG degrada silenciosamente sin que nadie lo detecte. | ✅ resuelto sesión 4 |
+
+**Nota sobre falsos positivos descartados:**
+- *Credenciales hardcodeadas en cliente*: La `anon key` de Supabase es pública por diseño en apps browser. RLS protege los datos. No es un problema real.
+- *CSRF en Edge Functions*: Las funciones validan JWT en cada request. Sin token válido no hay mutaciones. Riesgo real muy bajo.
+- *Rate limiter en memoria*: Ya documentado como brecha conocida en "Brechas conocidas fuera del roadmap".
+
+### MEDIA — deuda técnica real, resolver gradualmente
+
+| ID | Archivo | Problema |
+|----|---------|----------|
+| M1 | `src/hooks/useMeetingBundle.ts` | Sin `AbortController` — si el usuario cambia de meeting rápido, dos requests en vuelo pueden producir estado stale. |
+| M2 | `src/features/chat/ChatTab.tsx` | Fetch de streaming sin timeout — si Cloud Run tarda, la UI queda colgada indefinidamente. |
+| M3 | `src/contexts/AuthContext.tsx` vs `OrgContext.tsx` | Error handling inconsistente: Auth lanza errores, Org los silencia. Debugging difícil. |
+| M4 | `src/components/AudioRecorder.tsx` | `setInterval` puede quedar activo si el componente se desmonta durante grabación (memory leak). |
+| M5 | `src/pages/MeetingDetail.tsx` | Sin `ErrorBoundary` en los tabs de análisis — si crashea un tab, desaparece todo sin feedback al usuario. |
+
+### BAJA — mejoras de calidad
+
+| ID | Archivo | Problema |
+|----|---------|----------|
+| B1 | `tsconfig.json` | `strictNullChecks: false`, `noImplicitAny: false` — facilita bugs null/undefined silenciosos. Habilitar en modo estricto gradualmente. |
+| B2 | Todas las Edge Functions | `console.log()` sin niveles ni contexto estructurado. Noise en logs de producción. |
+| B3 | `agents/auditor/agent.py`, `agent-orchestrator/index.ts` | Nombres de modelo (`gpt-4o`) hardcodeados — sin config central. |
+| B4 | Todas las Edge Functions + Python service | Sin request ID (trace ID) para correlacionar logs entre Deno ↔ Python ↔ DB. |
+
+### Pendientes de sesiones anteriores aún abiertos
+
+Ver sección "Brechas conocidas fuera del roadmap inmediato" para los demás pendientes conocidos (cost_estimate_usd null, flujo de eliminación de datos LGPD, etc.).
