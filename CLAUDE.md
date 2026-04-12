@@ -115,7 +115,7 @@ All Edge Function calls go through `invokeFunction()` which wraps `supabase.func
 ## Roadmap de producto (priorizado)
 
 Orden decidido el 2026-03-11 después de análisis de brechas para llegar a producto profesional con usuarios reales.
-**Estado al 2026-04-07:** ítems 1–6 completos. Cloud Run activo (Fase 6 completa). Webhook Supabase configurado y validado e2e. App lista para beta cerrada.
+**Estado al 2026-04-12:** ítems 1–7 completos. Cloud Run activo (Fase 6 completa). Webhook Supabase configurado y validado e2e. Pipeline e2e verificado en sesión 3. App lista para beta cerrada.
 
 | # | Feature | Estado | Razonamiento |
 |---|---------|--------|--------------|
