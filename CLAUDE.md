@@ -464,20 +464,13 @@ Frontend → agent-orchestrator (Deno) → INSERT meeting_analyses
 
 ### Mantenimiento CI/CD — deprecación Node.js 20 en GitHub Actions
 
-**Advertencia activa desde 2026-04-10:** las actions `actions/checkout@v4`, `google-github-actions/auth@v2` y `google-github-actions/setup-gcloud@v2` corren con Node.js 20, que GitHub va a retirar.
+✅ **Resuelto sesión 4 (2026-04-12):** actions actualizadas a versiones Node.js 24 en `.github/workflows/deploy-ai-service.yml`:
 
-**Fechas límite:**
-- **2026-06-02** — Node.js 24 pasa a ser el default (las actions actuales *pueden* dejar de funcionar)
-- **2026-09-16** — Node.js 20 eliminado completamente del runner
-
-**Acción requerida antes del 2026-06-02:** actualizar versiones en `.github/workflows/deploy-ai-service.yml`:
 ```yaml
-# Verificar las versiones más recientes compatibles con Node.js 24:
-actions/checkout@v4              → v4.x más reciente (o v5 si existe)
-google-github-actions/auth@v2    → v3 si está disponible
-google-github-actions/setup-gcloud@v2 → v3 si está disponible
+actions/checkout@v4              → actions/checkout@v6
+google-github-actions/auth@v2    → google-github-actions/auth@v3
+google-github-actions/setup-gcloud@v2 → google-github-actions/setup-gcloud@v3
 ```
-El deploy sigue funcionando sin cambios hasta esa fecha.
 
 ---
 
