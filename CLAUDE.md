@@ -165,7 +165,7 @@ Orden decidido el 2026-03-11 después de análisis de brechas para llegar a prod
 - Dashboard usa `useState` en vez de TanStack Query — inconsistencia a resolver
 - `getMeetingBundle` usa raw `fetch` con URL hardcodeada — único llamado fuera de `apiClient.ts`
 - **Supabase Storage límite 50MB (plan gratuito)** — archivos de reuniones largas lo superan fácilmente. Opciones: comprimir audio en el cliente antes de subir (Web Audio API / ffmpeg.wasm), o migrar a plan pro cuando haya usuarios reales.
-- **Archivos de YouTube / formato no estándar en sync path** — archivos .mp3 descargados de YouTube suelen ser contenedores M4A/AAC internamente. Whisper los rechaza con 400 en el sync path (Deno, ≤25 MB). El chunked path Python funciona porque ffmpeg los normaliza. Fix pendiente: convertir con ffmpeg en `stt-transcribe` antes de enviar a Whisper. Por ahora: si falla Whisper y había transcripción previa, el status se restaura (no queda en "error").
+- **Archivos de YouTube / formato no estándar en sync path** — ✅ resuelto sesión 4 (commit `70ef7c1`). `detectAudioMimeType()` en `stt-transcribe` lee los primeros 12 bytes (magic bytes) para determinar el formato real e ignorar el `mime_type` almacenado cuando no coincide. M4A/MP4, WebM, OGG, WAV y MP3 detectados. Fallback al tipo almacenado si no se reconocen los bytes.
 - **Leaked Password Protection deshabilitado** — requiere plan Pro de Supabase (no disponible en gratuito). Activar en Dashboard → Authentication → Settings → "Prevent use of leaked passwords" al migrar a Pro.
 
 ### Bloqueadores pre-beta resueltos (2026-03-18 y 2026-04-10)
@@ -578,8 +578,8 @@ Revisión completa del código realizada en sesión 4. Hallazgos organizados por
 
 | ID | Archivo | Problema | Estado |
 |----|---------|----------|--------|
-| A1 | `src/pages/Dashboard.tsx:228` | `dangerouslySetInnerHTML` con snippets de `ts_headline` — XSS potencial si PostgreSQL no escapa HTML correctamente | ✅ resuelto sesión 4 |
-| A2 | `supabase/functions/stt-transcribe/index.ts` | Si `generateEmbeddings()` falla, los segmentos se guardan sin embeddings sin ningún log. El chat RAG degrada silenciosamente sin que nadie lo detecte. | ✅ resuelto sesión 4 |
+| A1 | `src/pages/Dashboard.tsx:228` | `dangerouslySetInnerHTML` con snippets de `ts_headline` — XSS potencial si PostgreSQL no escapa HTML correctamente | ✅ resuelto sesión 4 — commit `064647b` |
+| A2 | `supabase/functions/stt-transcribe/index.ts` | Si `generateEmbeddings()` falla, los segmentos se guardan sin embeddings sin ningún log. El chat RAG degrada silenciosamente sin que nadie lo detecte. | ✅ resuelto sesión 4 — commit `064647b` |
 
 **Nota sobre falsos positivos descartados:**
 - *Credenciales hardcodeadas en cliente*: La `anon key` de Supabase es pública por diseño en apps browser. RLS protege los datos. No es un problema real.
