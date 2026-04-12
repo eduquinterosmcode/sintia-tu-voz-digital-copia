@@ -9,6 +9,29 @@ interface DiarizedSegment {
   text: string;
 }
 
+// ── Audio format detection ───────────────────────────────────────────────────
+// Files downloaded from YouTube (and some other sources) often have a .mp3
+// extension but are actually M4A/AAC containers internally. Whisper rejects
+// them with HTTP 400 when sent as audio/mpeg. Detecting by magic bytes instead
+// of trusting the stored mime_type fixes this without requiring ffmpeg.
+
+function detectAudioMimeType(buffer: ArrayBuffer): string | null {
+  const b = new Uint8Array(buffer, 0, Math.min(12, buffer.byteLength));
+  // M4A / MP4: size (4 bytes) + "ftyp" at offset 4
+  if (b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70) return "audio/mp4";
+  // WebM
+  if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return "audio/webm";
+  // OGG
+  if (b[0] === 0x4f && b[1] === 0x67 && b[2] === 0x67 && b[3] === 0x53) return "audio/ogg";
+  // WAV: RIFF header
+  if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46) return "audio/wav";
+  // MP3 with ID3 tag
+  if (b[0] === 0x49 && b[1] === 0x44 && b[2] === 0x33) return "audio/mpeg";
+  // MP3 sync bytes (no ID3)
+  if (b[0] === 0xff && (b[1] === 0xfb || b[1] === 0xf3 || b[1] === 0xf2)) return "audio/mpeg";
+  return null;
+}
+
 // ── Embeddings ───────────────────────────────────────────────────────────────
 
 const EMBEDDING_MODEL = "text-embedding-3-small";
@@ -226,9 +249,21 @@ Deno.serve(async (req) => {
     await supabase.from("meetings").update({ status: "uploaded" }).eq("id", meeting_id);
 
     // Call OpenAI transcription
+    // Detect actual MIME type from magic bytes — YouTube MP3 files are often
+    // M4A/AAC containers mislabeled as audio/mpeg. Whisper rejects the mismatch.
+    const audioBuffer = await audioBlob.arrayBuffer();
+    const declaredMimeType = audio.mime_type || "audio/webm";
+    const detectedMimeType = detectAudioMimeType(audioBuffer);
+    const effectiveMimeType = detectedMimeType ?? declaredMimeType;
+    if (detectedMimeType && detectedMimeType !== declaredMimeType) {
+      console.warn(
+        `[stt-transcribe] meeting_id=${meeting_id} — MIME mismatch: declared=${declaredMimeType}, detected=${effectiveMimeType}. Using detected type.`
+      );
+    }
+
     const formData = new FormData();
     const fileName = audio.storage_path.split("/").pop() || "audio.webm";
-    formData.append("file", new File([audioBlob], fileName, { type: audio.mime_type || "audio/webm" }));
+    formData.append("file", new File([audioBuffer], fileName, { type: effectiveMimeType }));
     formData.append("model", sttModel);
     formData.append("language", language.split("-")[0]);
     // gpt-4o-transcribe only supports "json" or "text"; whisper supports "verbose_json"
