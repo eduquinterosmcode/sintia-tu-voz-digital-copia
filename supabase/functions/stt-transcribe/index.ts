@@ -328,7 +328,11 @@ Deno.serve(async (req) => {
         embeddings = await generateEmbeddings(openaiKey, texts);
         console.log(`Generated ${embeddings.length} embeddings for ${rawSegments.length} segments`);
       } catch (embErr) {
-        console.warn("Embedding generation failed — inserting segments without embeddings:", embErr);
+        console.error(
+          `[stt-transcribe] meeting_id=${meeting_id} — embedding generation failed for ${rawSegments.length} segments. ` +
+          `Chat RAG will fall back to full-text search only. Error:`,
+          embErr
+        );
       }
 
       const segmentRows = rawSegments.map((seg, idx) => ({

@@ -11,6 +11,15 @@ import { createDemoMeeting, analyzeMeeting, searchMeetings, MeetingSearchResult 
 import { useToast } from "@/hooks/use-toast";
 import StatusBadge from "@/components/StatusBadge";
 
+function renderSnippet(snippet: string) {
+  const parts = snippet.split(/(<b>.*?<\/b>)/g);
+  return parts.map((part, i) => {
+    const match = part.match(/^<b>(.*?)<\/b>$/);
+    if (match) return <b key={i} className="text-foreground font-semibold">{match[1]}</b>;
+    return <span key={i}>{part}</span>;
+  });
+}
+
 interface Meeting {
   id: string;
   title: string;
@@ -223,10 +232,9 @@ export default function Dashboard() {
                 <p className="text-xs text-muted-foreground mb-2">
                   {r.sector_name} · {new Date(r.created_at).toLocaleDateString("es-CL")}
                 </p>
-                <p
-                  className="text-sm text-muted-foreground leading-relaxed [&_b]:text-foreground [&_b]:font-semibold"
-                  dangerouslySetInnerHTML={{ __html: r.snippet }}
-                />
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  {renderSnippet(r.snippet)}
+                </p>
               </Link>
             ))}
           </div>
