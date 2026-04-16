@@ -201,6 +201,77 @@ Pendiente (requiere plan Pro):
 
 ---
 
+## Rotación de secretos — procedimiento validado (sesión 5, 2026-04-16)
+
+> **NOTA:** Ninguna Edge Function de Supabase lee `WEBHOOK_SECRET`.
+> Validado con grep exhaustivo en sesión 5 (2026-04-16). El paso que mencionaba
+> actualizar `WEBHOOK_SECRET` en Supabase Edge Functions Secrets era incorrecto —
+> ese secret nunca existió ahí y ninguna función Deno lo usa.
+
+> **NOTA TÉCNICA — pinning de `:latest` en Cloud Run:**
+> El workflow usa `sintia-webhook-secret:latest` en `--set-secrets`.
+> GCP resuelve `:latest` a la versión concreta **en el momento del deploy**
+> y la pina en esa revisión. Las instancias en ejecución no se actualizan
+> automáticamente al crear una nueva versión en Secret Manager.
+> **Cualquier rotación de secretos REQUIERE un redeploy de Cloud Run.**
+>
+> Este comportamiento es también una red de seguridad: la revisión activa
+> sigue usando la versión pinada hasta que el nuevo deploy complete
+> exitosamente. El sistema no rompe al crear una nueva versión en Secret
+> Manager — solo rompe si se completan tanto el redeploy como la actualización
+> del webhook header con el nuevo valor. Esto da una ventana segura: puedes
+> hacer el redeploy y actualizar el webhook en momentos distintos sin riesgo
+> de downtime.
+
+### Procedimiento (para `sintia-webhook-secret` y cualquier otro secret de Cloud Run)
+
+1. **Generar nuevo valor**
+   ```bash
+   openssl rand -base64 32
+   ```
+
+2. **GCP Secret Manager** → proyecto `sintia-production` → secret objetivo
+   → *Add new version* → pegar valor → marcar *Disable all past versions*
+
+3. **Redeploy Cloud Run** para que pine la nueva versión
+   - Opción A (recomendada para rotaciones futuras): GitHub → Actions →
+     *Deploy AI Service to Cloud Run* → *Run workflow*
+   - Opción B (primera vez): push cualquier cambio a `apps/ai-service/**`
+     o al propio workflow
+
+   > **Nota:** La primera vez que se agrega `workflow_dispatch`, el mismo
+   > push que lo agrega dispara el deploy vía path watch — eso es la Opción B
+   > como efecto colateral. A partir de ese momento, todas las rotaciones
+   > futuras deben usar la Opción A (trigger manual desde GitHub UI).
+   > No hacer commits vacíos ni cambios de relleno solo para disparar un redeploy.
+
+   - Verificar en GCP Console → Cloud Run → `sintia-ai-service` → nueva
+     revisión → pestaña *Variables & Secrets* → confirmar que `WEBHOOK_SECRET`
+     apunta a la versión nueva (no a la versión 1)
+
+4. **Supabase Dashboard** → Database → Webhooks → `analysis-completed`
+   → editar header `x-webhook-secret` → reemplazar con el nuevo valor
+   ⚠️ Este campo NO se sincroniza automáticamente con nada — hay que actualizarlo manualmente.
+
+5. **Test e2e**: seleccionar reunión con status `transcribed` → Analizar
+   → verificar que el tab "Calidad" aparece en ~20s
+
+6. **Destruir versión antigua** en GCP Secret Manager
+   → versión inhabilitada → *Destroy version* → confirmar
+   (Inhabilitada se puede re-habilitar; Destruida borra el valor criptográfico
+   de forma permanente — necesario para cerrar el ciclo de seguridad correctamente)
+
+### Tabla de riesgos — rotación de secrets
+
+| Riesgo | Probabilidad | Mitigación |
+|--------|-------------|------------|
+| CI/CD falla (imagen Docker, auth WIF) | baja — no se toca código Python ni Dockerfile | Ver logs en Actions, no tocar webhook hasta deploy verde |
+| Secret mal cargado en nueva revisión | muy baja — mismo workflow que funcionó antes | Verificación explícita en GCP Console antes del Paso 4 |
+| Webhook actualizado antes de que Cloud Run tome el nuevo secret | evitado por orden del proceso | Secuencia estricta: redeploy → verificar → webhook |
+| CI/CD falla durante la rotación | baja | Sistema sigue operativo temporalmente: Cloud Run mantiene la revisión anterior con la versión 1 del secret pinada, y el header del webhook sigue coincidiendo con ese valor. No tocar el webhook de Supabase hasta resolver. Investigar logs en Actions y reintentar vía workflow_dispatch. |
+
+---
+
 ## Roadmap arquitectónico
 
 ### Estructura objetivo: monorepo

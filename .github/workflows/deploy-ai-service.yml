@@ -6,6 +6,7 @@ on:
     paths:
       - "apps/ai-service/**"
       - ".github/workflows/deploy-ai-service.yml"
+  workflow_dispatch:
 
 env:
   REGION: ${{ secrets.GCP_REGION }}
