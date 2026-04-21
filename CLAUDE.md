@@ -114,90 +114,30 @@ All Edge Function calls go through `invokeFunction()` which wraps `supabase.func
 
 ## Roadmap de producto (priorizado)
 
-Orden decidido el 2026-03-11 después de análisis de brechas para llegar a producto profesional con usuarios reales.
-**Estado al 2026-04-12:** ítems 1–7 completos. Cloud Run activo (Fase 6 completa). Webhook Supabase configurado y validado e2e. Pipeline e2e verificado en sesión 3. App lista para beta cerrada.
+**Estado al 2026-04-21:** ítems 1–7 completos. Cloud Run activo. Webhook Supabase configurado y validado e2e. App lista para beta cerrada. Ítem 9 es prioridad máxima.
 
 | # | Feature | Estado | Razonamiento |
 |---|---------|--------|--------------|
-| 1 | **Embeddings semánticos en chat** | ✅ completo | RAG con `text-embedding-3-small` + HNSW index. 3 niveles: vector → full-text → cronológico. Script `backfill_embeddings.py` para meetings existentes. |
-| 2 | **Storage policies + RBAC básico** | ✅ completo | Políticas RLS tightened (org_provider_settings, organizations, org_members). Edge Function `get-org-members`. SettingsPage con role badge, campos read-only para members, sección Equipo. |
-| 3 | **Streaming en chat** | ✅ completo | SSE desde `handleChatStream()` en agent-orchestrator. `streamChatWithMeeting()` en apiClient con fetch directo. ChatTab con cursor parpadeante y acumulación en tiempo real. |
-| 4 | **Polling/WebSocket para análisis** | ✅ completo | Fire-and-forget + polling DB-driven. `agent-orchestrator` escribe `status="analyzing"` antes del pipeline LLM. `useMeetingBundle` hace polling cada 3s mientras el status es processing. `MeetingDetail` usa `useRef` para detectar la transición y mostrar toast. El usuario puede navegar libremente. |
-| 5 | **Exportación básica (PDF/copy)** | ✅ completo | Botón "Exportar" (outline) en MeetingDetail, visible cuando hay análisis. "Copiar análisis" → Markdown al portapapeles. "Exportar PDF" → ventana nueva con HTML+estilos inline + `window.print()`. Sin dependencias nuevas. Lógica en `src/features/export/exportUtils.ts`. |
-| 6 | **Búsqueda entre reuniones** | ✅ completo | RPC `search_meetings` con `plainto_tsquery` sobre índice GIN existente. Dashboard en modo dual: filtro por título (<3 chars) + búsqueda full-text con debounce (≥3 chars). Snippets con términos resaltados via `ts_headline`. |
-| 7 | **Whisper chunking >25 min** | ✅ completo | `stt-transcribe` detecta >25 MB y encola job `transcribe_audio` en `ai_jobs`. Python worker (`handlers/transcribe.py`): download Storage → ffmpeg (16kHz mono MP3) → chunks 10min+5s overlap → whisper-1 en serie → merge timestamps → embeddings → INSERT transcripts+segments. Status `transcribing` activa polling automático en frontend. |
-| 8 | **Diarización automática de speakers** | pendiente | Alta fricción diaria (renombrar SPEAKER_0 manualmente). Decisión pendiente: pyannote.audio self-hosted (gratis, ~2GB RAM, sin GPU) vs Deepgram ($0.26/h) vs AssemblyAI ($0.37/h). Cloud Run activo — bloqueador resuelto. |
-| 9 | **Migración especialistas Deno → agentes Python reales** | pendiente | Especialistas actuales son LLM calls directas. Objetivo: Agent-as-Tool pattern con OpenAI Agents SDK. Orden: sector Negocios primero → validar → migrar sector por sector → retirar Deno. |
-| 10 | **Tests de integración** | pendiente | Pipeline largo sin cobertura (frontend → Edge Function → Postgres → webhook → Cloud Run → agente). Implementar después de ítem 9 cuando la arquitectura esté estable. Mínimo: un test por Edge Function crítica + validación de job queue end-to-end. |
-
-### Notas de diseño — Ítem 6: Búsqueda entre reuniones
-
-**Qué buscar:** texto libre sobre el contenido de reuniones pasadas (transcripciones + análisis).
-
-**Infraestructura disponible:**
-- `meeting_segments.text_search` — columna `tsvector` (config español) ya existente, usada por el chat RAG.
-- `meeting_segments` tiene índice GIN sobre `text_search` (creado en migración existente).
-- `meeting_analyses.analysis_json` — JSONB, buscable con `jsonb_to_tsvector` o `to_tsvector(analysis_json::text)`.
-- Embeddings semánticos ya existen en `meeting_segments` (roadmap ítem 1, completado).
-
-**Estrategia recomendada — todo en frontend + RPC Postgres:**
-1. Barra de búsqueda global en el Dashboard (o página `/search` dedicada).
-2. Edge Function nueva `search-meetings` o RPC Postgres `search_meetings(query text, org_id uuid)`.
-3. La RPC hace `plainto_tsquery('spanish', query)` sobre `meeting_segments.text_search`, agrupa por `meeting_id`, devuelve: `meeting_id`, `title`, `created_at`, `sector`, `snippet` (fragmento relevante con `ts_headline`).
-4. Opcionalmente combina con búsqueda en `analysis_json` para encontrar reuniones donde el análisis menciona el término.
-5. Resultados: lista de reuniones con snippet resaltado → click navega a `MeetingDetail`.
-
-**RLS:** la RPC debe filtrar por `org_id` del usuario (usar `user_has_org_access(org_id)`).
-
-**Scope mínimo viable:** solo búsqueda full-text sobre transcripciones (segments). La búsqueda semántica (embeddings) queda como mejora posterior.
-
-**Archivos a crear/modificar:**
-- `supabase/migrations/YYYYMMDD_search_meetings_rpc.sql` — función `search_meetings`
-- `supabase/functions/search-meetings/index.ts` — Edge Function (opcional, la RPC puede llamarse directo desde el cliente con `supabase.rpc()`)
-- `src/pages/Dashboard.tsx` — barra de búsqueda + resultados inline o navegación a `/search`
-- `src/services/apiClient.ts` — `searchMeetings(query)` wrapper
+| 1 | **Embeddings semánticos en chat** | ✅ completo | RAG tri-nivel: vector (`text-embedding-3-small` + HNSW) → full-text → cronológico. |
+| 2 | **Storage policies + RBAC básico** | ✅ completo | RLS tightened + `get-org-members` Edge Function + SettingsPage con roles. |
+| 3 | **Streaming en chat** | ✅ completo | SSE desde `handleChatStream()` + `streamChatWithMeeting()` en apiClient. |
+| 4 | **Polling/WebSocket para análisis** | ✅ completo | Fire-and-forget + polling DB cada 3s. Usuario navega libremente durante análisis. |
+| 5 | **Exportación básica (PDF/copy)** | ✅ completo | "Copiar análisis" → Markdown. "Exportar PDF" → HTML+print. `exportUtils.ts`. |
+| 6 | **Búsqueda entre reuniones** | ✅ completo | RPC `search_meetings` + `plainto_tsquery` + `ts_headline` snippets (XSS-safe). |
+| 7 | **Whisper chunking >25 min** | ✅ completo | `stt-transcribe` detecta >25 MB → encola job. Python worker: ffmpeg chunks → whisper-1 → merge → embeddings. |
+| 8 | **Diarización automática de speakers** | pendiente | Postergada hasta feedback beta. Decisión técnica pendiente: pyannote.audio vs Deepgram ($0.26/h) vs AssemblyAI ($0.37/h). |
+| 9 | **Migración especialistas Deno → agentes Python reales** | pendiente | **Prioridad máxima.** Especialistas actuales son LLM calls directas. Objetivo: Agent-as-Tool pattern con OpenAI Agents SDK. |
+| 10 | **Tests de integración** | pendiente | Después de ítem 9. Mínimo: un test por Edge Function crítica + job queue e2e. |
 
 ### Brechas conocidas fuera del roadmap inmediato
-- Rate limiter en memoria (no persiste entre instancias) — resolver al activar Cloud Run
+- Rate limiter en memoria (no persiste entre instancias) — resolver al escalar
 - `cost_estimate_usd` siempre null en `usage_events` — necesario para pricing
 - Flujo de eliminación de datos (LGPD/Ley 19.628) — prerequisito legal antes de público general
 - Cero tests de integración o E2E — riesgo creciente con cada refactor
 - Dashboard usa `useState` en vez de TanStack Query — inconsistencia a resolver
 - `getMeetingBundle` usa raw `fetch` con URL hardcodeada — único llamado fuera de `apiClient.ts`
-- **Supabase Storage límite 50MB (plan gratuito)** — archivos de reuniones largas lo superan fácilmente. Opciones: comprimir audio en el cliente antes de subir (Web Audio API / ffmpeg.wasm), o migrar a plan pro cuando haya usuarios reales.
-- **Archivos de YouTube / formato no estándar en sync path** — ✅ resuelto sesión 4 (commit `70ef7c1`). `detectAudioMimeType()` en `stt-transcribe` lee los primeros 12 bytes (magic bytes) para determinar el formato real e ignorar el `mime_type` almacenado cuando no coincide. M4A/MP4, WebM, OGG, WAV y MP3 detectados. Fallback al tipo almacenado si no se reconocen los bytes.
-- **Leaked Password Protection deshabilitado** — requiere plan Pro de Supabase (no disponible en gratuito). Activar en Dashboard → Authentication → Settings → "Prevent use of leaked passwords" al migrar a Pro.
-
-### Bloqueadores pre-beta resueltos (2026-03-18 y 2026-04-10)
-
-**1. Límite de 25MB de Whisper — RESUELTO (2026-04-10)**
-- Chunked transcription vía Python worker: `stt-transcribe` detecta >25 MB, encola job `transcribe_audio` en `ai_jobs`, Python worker descarga → ffmpeg → chunks 10min+5s overlap → whisper-1 → merge → embeddings → DB.
-- Status `transcribing` activa polling automático en frontend (aparece automáticamente cuando termina).
-- Wake-up ping a Cloud Run (`AI_SERVICE_URL` secret en Supabase) para evitar que el job quede pendiente si la instancia está dormida.
-
-**2. Eliminación de reuniones**
-- Migración `20260318200000_meeting_delete_policy.sql`: política DELETE en `meetings` + política DELETE en Storage bucket `meeting-audio` para org members.
-- `apiClient.ts`: `deleteMeeting(meetingId)` — busca paths de audio, borra Storage (non-fatal), borra fila meetings (CASCADE elimina todo lo demás).
-- `MeetingDetail.tsx`: botón "Eliminar" con `AlertDialog` de confirmación. Visible en todos los estados de la reunión. Post-confirmación navega a `/dashboard`.
-
-### Security Advisor — estado (2026-03-18)
-
-Resueltos en migración `20260318000000_security_advisor_fixes.sql`:
-
-| Severidad | Issue | Resolución |
-|-----------|-------|------------|
-| Error | Security Definer View: `agent_profiles_public` | Vista recreada con `security_invoker=true` |
-| Error | RLS Disabled: `ai_jobs` | RLS habilitado; sin políticas de usuario (acceso solo por service_role/postgres) |
-| Error | RLS Disabled: `meeting_quality_reports` | RLS habilitado + política SELECT para org members |
-| Warning | Function Search Path Mutable: `match_meeting_segments` | `SET search_path TO public, extensions` (pgvector requiere `extensions` en el path) |
-| Warning | Function Search Path Mutable: `ai_jobs_set_updated_at` | `SET search_path = ''` |
-| Warning | Function Search Path Mutable: `quality_reports_set_updated_at` | `SET search_path = ''` |
-
-Pendiente (requiere plan Pro):
-
-| Severidad | Issue | Acción |
-|-----------|-------|--------|
-| Warning | Leaked Password Protection deshabilitado | Dashboard → Authentication → Settings → activar "Prevent use of leaked passwords" |
+- **Supabase Storage límite 50MB (plan gratuito)** — archivos de reuniones largas lo superan fácilmente. Comprimir audio en el cliente o migrar a plan Pro.
+- **Leaked Password Protection deshabilitado** — requiere plan Pro. Activar en Dashboard → Authentication → Settings → "Prevent use of leaked passwords".
 
 ---
 
@@ -239,17 +179,14 @@ Pendiente (requiere plan Pro):
    - Opción B (primera vez): push cualquier cambio a `apps/ai-service/**`
      o al propio workflow
 
-   > **Nota:** La primera vez que se agrega `workflow_dispatch`, el mismo
-   > push que lo agrega dispara el deploy vía path watch — eso es la Opción B
-   > como efecto colateral. A partir de ese momento, todas las rotaciones
-   > futuras deben usar la Opción A (trigger manual desde GitHub UI).
-   > No hacer commits vacíos ni cambios de relleno solo para disparar un redeploy.
+   > **Nota:** No hacer commits vacíos ni cambios de relleno solo para disparar un redeploy.
+   > Usar siempre la Opción A (workflow_dispatch) para rotaciones futuras.
 
    - Verificar en GCP Console → Cloud Run → `sintia-ai-service` → nueva
      revisión → pestaña *Variables & Secrets* → confirmar que `WEBHOOK_SECRET`
      apunta a la versión nueva (no a la versión 1)
 
-4. **Supabase Dashboard** → Database → Webhooks → `analysis-completed`
+4. **Supabase Dashboard** → Database → Webhooks → `on-analysis-insert`
    → editar header `x-webhook-secret` → reemplazar con el nuevo valor
    ⚠️ Este campo NO se sincroniza automáticamente con nada — hay que actualizarlo manualmente.
 
@@ -268,7 +205,7 @@ Pendiente (requiere plan Pro):
 | CI/CD falla (imagen Docker, auth WIF) | baja — no se toca código Python ni Dockerfile | Ver logs en Actions, no tocar webhook hasta deploy verde |
 | Secret mal cargado en nueva revisión | muy baja — mismo workflow que funcionó antes | Verificación explícita en GCP Console antes del Paso 4 |
 | Webhook actualizado antes de que Cloud Run tome el nuevo secret | evitado por orden del proceso | Secuencia estricta: redeploy → verificar → webhook |
-| CI/CD falla durante la rotación | baja | Sistema sigue operativo temporalmente: Cloud Run mantiene la revisión anterior con la versión 1 del secret pinada, y el header del webhook sigue coincidiendo con ese valor. No tocar el webhook de Supabase hasta resolver. Investigar logs en Actions y reintentar vía workflow_dispatch. |
+| CI/CD falla durante la rotación | baja | Sistema sigue operativo: Cloud Run mantiene la revisión anterior con el secret pinado, y el header del webhook sigue coincidiendo. No tocar el webhook hasta resolver. Reintentar vía workflow_dispatch. |
 
 ---
 
@@ -339,7 +276,7 @@ Agregar el import en `handlers/__init__.py` para que se registre al startup.
 **Handlers registrados actualmente:**
 | Job type | Archivo | Trigger |
 |----------|---------|---------|
-| `audit_analysis` | `agents/auditor/handler.py` | Deno post-análisis (INSERT meeting_analyses) vía Supabase Webhook |
+| `audit_analysis` | `agents/auditor/handler.py` | Supabase Webhook `on-analysis-insert` (INSERT meeting_analyses) |
 | `transcribe_audio` | `handlers/transcribe.py` | `stt-transcribe` Deno cuando audio >25 MB |
 
 **Auth:** `SERVICE_API_KEY` estático (bearer token) en todos los endpoints excepto `/health`. Supabase JWT se agrega cuando el servicio sea llamado externamente.
@@ -351,6 +288,7 @@ Agregar el import en `handlers/__init__.py` para que se registre al startup.
 - **`OPENAI_API_KEY` no propagada**: `pydantic-settings` lee `.env` en el objeto `settings` pero NO setea `os.environ`. El SDK de OpenAI y `openai-agents` leen directamente de `os.environ`. Fix en `main.py`: `os.environ.setdefault("OPENAI_API_KEY", settings.openai_api_key)` al inicio del módulo.
 - **Supabase Storage download (Python)**: usar `GET /storage/v1/object/{storage_path}` con headers `Authorization: Bearer {service_role_key}` + `apikey: {service_role_key}`. El endpoint `/object/authenticated/` es solo para user JWT, no service role. Ambos headers son necesarios (igual que hace supabase-js internamente).
 - **Cloud Run CPU throttling**: sin `--no-cpu-throttling` en el deploy, Cloud Run **suspende el proceso completo** cuando no hay requests HTTP activos. El ffmpeg y cualquier work CPU-intensivo queda congelado indefinidamente. El flag es obligatorio para background workers.
+- **`openai-agents` version constraint**: `pyproject.toml` dice `>=0.0.7` pero la versión instalada (en `uv.lock`) es `0.11.1`. Actualizar el constraint si se cambia la dependencia para reflejar la versión mínima real.
 
 ### Agente crítico independiente — `AnalysisAuditor` (implementado)
 
@@ -377,8 +315,7 @@ agents/auditor/
 ├── agent.py       # Agent[AuditorContext] + search_transcript() tool
 ├── repository.py  # fetch_meeting_data(), save_report(), get_report()
 └── handler.py     # @register_handler("audit_analysis")
-api/webhooks.py    # POST /webhooks/analysis-completed (trigger vía Supabase Webhook)
-                   # Nota: el trigger manual POST /audit/{meeting_id} encola job vía la misma queue
+api/webhooks.py    # POST /webhooks/analysis-completed (trigger vía Supabase Webhook on-analysis-insert)
 migrations/002_create_meeting_quality_reports.sql
 ```
 
@@ -386,13 +323,6 @@ migrations/002_create_meeting_quality_reports.sql
 - FK a `meetings(id)` y `meeting_analyses(id)`
 - `UNIQUE(analysis_id)` — un reporte por versión de análisis; upsert idempotente
 - `confidence_score INT`, `report_json JSONB`, `model_used TEXT`
-
-**Flujo:**
-```
-POST /audit/{meeting_id}              → encola job
-GET  /jobs/{job_id}                   → polling de status
-GET  /audit/{meeting_id}              → fetch reporte final
-```
 
 **Diseño del agente:**
 - Segmentos NO van en el prompt — van en `AuditorContext` accesible via `search_transcript()` tool
@@ -410,9 +340,9 @@ Flujo activo en producción:
 ```
 Frontend → agent-orchestrator (Deno)
                ↓ análisis completado
-           INSERT INTO ai_jobs (job_type='audit_analysis')
-               ↓ worker polling cada 5s
-           Python worker (local / Cloud Run futuro)
+           INSERT INTO ai_jobs (job_type='audit_analysis')  ← fallback idempotente
+               ↓ Supabase Webhook on-analysis-insert (trigger primario)
+           Python worker (Cloud Run)
                ↓
            meeting_quality_reports
 ```
@@ -420,14 +350,7 @@ Frontend → agent-orchestrator (Deno)
 **Cambio en Deno** (`agent-orchestrator/index.ts`, función `handleAnalyze`):
 Después de `update({ status: "analyzed" })`, inserta en `ai_jobs` via `supabase.upsert()` con `ignoreDuplicates: true`. Fallo no-fatal: error loggeado pero la respuesta de análisis no se ve afectada.
 
-**Desacoplamiento via DB** (Strangler Fig): Deno escribe a `ai_jobs`, Python lee de `ai_jobs`. Sin HTTP directo entre servicios — el Python service ni siquiera necesita estar corriendo en el momento del análisis.
-
-**Validado e2e** (2026-03-10): job encolado → worker pick-up en <5s → agente corrió en ~15s → reporte guardado en `meeting_quality_reports`.
-
-**Siguiente integración (Fase futura):** cuando el servicio esté en Cloud Run, reemplazar el insert directo en `ai_jobs` por un Supabase Database Webhook → `POST /webhooks/analysis-completed`. El Deno quedaría como proxy liviano.
-
-### Estrategia de migración: Strangler Fig
-La migración del orquestador Deno → Python será gradual. El Deno actual sigue funcionando. Nuevas capacidades se implementan en Python primero; el Deno existente no se toca hasta que el Python sea equivalente y estable.
+**Desacoplamiento via DB** (Strangler Fig): Deno escribe a `ai_jobs`, Python lee de `ai_jobs`. Sin HTTP directo entre servicios.
 
 ### Fase 4 — Frontend del reporte de calidad (completa)
 
@@ -443,7 +366,6 @@ Tab hardcodeado "Calidad" en `MeetingDetail.tsx`. Transversal a todos los sector
 - Tab visible solo cuando existe `analysis` para la reunión
 - Score mostrado en el tab trigger con color: verde ≥80, ámbar ≥60, rojo <60
 - Tres secciones: ScoreGauge · Contradicciones · Claims sin evidencia
-- Empty state con ✅ cuando la sección no tiene issues
 - Placeholder "Auditoría pendiente" si el reporte aún no fue generado
 
 ### Fase 5 — Dominios profesionales configurables por DB (completa)
@@ -460,72 +382,43 @@ Campo `activation_rules JSONB` en `agent_profiles`. Backward-compatible: `null` 
 **Comportamiento:**
 - El orchestrator evalúa las rules contra el transcript completo antes del MAP phase
 - Fail-open: si todas las rules filtran todos los especialistas, se usan todos (no falla el análisis)
-- Skips y activaciones quedan loggeados en los Edge Function logs
-
-**Archivos modificados:**
-- `supabase/functions/agent-orchestrator/index.ts` — interface `ActivationRules`, función `shouldActivateSpecialist()`, filtro en `handleAnalyze()`
-- `supabase/migrations/20260310120000_add_activation_rules_to_agent_profiles.sql` — `ALTER TABLE agent_profiles ADD COLUMN activation_rules JSONB`
 
 **Para agregar un nuevo dominio sin código:** insertar filas en `sectors` + `agent_profiles` (con o sin `activation_rules`) — el orchestrator lo toma automáticamente.
 
-### Fase 6 — Deploy en Cloud Run
+### Fase 6 — Deploy en Cloud Run (completa, validada e2e)
 
-**Estado (2026-04-10): COMPLETA y validada e2e.** Cloud Run activo en `https://sintia-ai-service-hsimetvv7q-uc.a.run.app`. Webhook Supabase configurado (meeting_analyses INSERT → /webhooks/analysis-completed). Flujo completo validado: análisis → webhook → job en ai_jobs → reporte en meeting_quality_reports → tab "Calidad" en la app.
+**Cloud Run URL:** `https://sintia-ai-service-hsimetvv7q-uc.a.run.app`
 
-**Configuración actual del deploy:**
-- `--no-cpu-throttling` — **crítico para background workers**. Sin esto, Cloud Run suspende el proceso entre peticiones HTTP, congelando ffmpeg y operaciones CPU-intensivas indefinidamente.
-- `--timeout 3600` — necesario para transcripciones largas (default 300 era insuficiente).
-- `--min-instances 0` — escala a 0 para ahorrar costo. El wake-up se hace vía ping desde `stt-transcribe` usando el secret `AI_SERVICE_URL`.
+**Configuración del deploy:**
+- `--no-cpu-throttling` — **crítico para background workers**
+- `--timeout 3600` — necesario para transcripciones largas
+- `--min-instances 0` — escala a 0; wake-up via ping desde `stt-transcribe` usando secret `AI_SERVICE_URL`
 
-**Secret adicional en Supabase Edge Functions:**
-- `AI_SERVICE_URL = https://sintia-ai-service-hsimetvv7q-uc.a.run.app` — usado por stt-transcribe para despertar Cloud Run al encolar un job.
-
-**Infraestructura GCP creada (sintia-production):**
-- Proyecto GCP: `sintia-production`
+**Infraestructura GCP (sintia-production):**
 - Artifact Registry: repositorio `sintia` en `us-central1`
-- Workload Identity Federation: pool `github-actions`, provider `github`
+- Workload Identity Federation: pool `github-actions` — keyless auth, sin JSON key de larga duración
 - Service Account: `sintia-deploy@sintia-production.iam.gserviceaccount.com`
-  - `roles/run.admin`
-  - `roles/artifactregistry.writer`
-  - `roles/secretmanager.secretAccessor`
-- Secret Manager: `sintia-database-url`, `sintia-openai-key`, `sintia-service-api-key`, `sintia-webhook-secret`
+- Secret Manager: `sintia-database-url`, `sintia-openai-key`, `sintia-service-api-key`, `sintia-webhook-secret`, `sintia-supabase-url`, `sintia-supabase-service-role-key`
 
-**GitHub Secrets configurados** (Settings > Secrets > Actions):
-| Secret | Descripción |
-|--------|-------------|
+**GitHub Secrets:**
+| Secret | Valor |
+|--------|-------|
 | `GCP_PROJECT_ID` | `sintia-production` |
 | `GCP_REGION` | `us-central1` |
 | `GCP_AR_REPO` | `sintia` |
-| `GCP_SERVICE_ACCOUNT` | Email de la service account `sintia-deploy` |
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Resource name completo del provider WIF |
+| `GCP_SERVICE_ACCOUNT` | Email de la service account |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Resource name del provider WIF |
 | `GCP_SA_KEY` | Obsoleto — reemplazado por WIF, puede eliminarse |
 
-**Nota:** El workflow usa Workload Identity Federation (keyless auth) en lugar de JSON key. No hay credenciales de larga duración almacenadas en GitHub. El runner solicita un token OIDC de corta duración que GCP valida contra el repositorio.
+**Supabase Database Webhook (`on-analysis-insert`):**
+- Table: `meeting_analyses`, Event: `INSERT`
+- URL: `https://sintia-ai-service-hsimetvv7q-uc.a.run.app/webhooks/analysis-completed`
+- HTTP Header: `x-webhook-secret: <WEBHOOK_SECRET>`
 
-**Archivos creados/modificados:**
-- `apps/ai-service/Dockerfile` — `COPY uv.lock` + `CMD` respeta `$PORT` (Cloud Run requiere 8080)
-- `apps/ai-service/src/ai_service/api/webhooks.py` — `POST /webhooks/analysis-completed`
-- `apps/ai-service/src/ai_service/config.py` — campo `webhook_secret`
-- `.github/workflows/deploy-ai-service.yml` — CI/CD con WIF: build → push Artifact Registry → deploy Cloud Run
-
-**Secrets en GCP Secret Manager** (nombres exactos usados en el workflow):
-- `sintia-database-url` — `DATABASE_URL` asyncpg
-- `sintia-openai-key` — `OPENAI_API_KEY`
-- `sintia-service-api-key` — `SERVICE_API_KEY`
-- `sintia-webhook-secret` — `WEBHOOK_SECRET` (valor libre, guárdalo también en Supabase)
-
-**Una vez desplegado — configurar Supabase Database Webhook:**
-1. Supabase Dashboard → Database → Webhooks → Create
-2. Table: `meeting_analyses`, Event: `INSERT`
-3. URL: `https://<cloud-run-url>/webhooks/analysis-completed`
-4. HTTP Headers: `x-webhook-secret: <WEBHOOK_SECRET>`
-
-El endpoint recibe el payload de Supabase (`record.id` = analysis_id, `record.meeting_id`) y encola el job en `ai_jobs`. El worker Python lo procesa igual que antes. El insert Deno en `agent-orchestrator` queda como fallback idempotente (ON CONFLICT DO NOTHING).
-
-**Flujo completo con webhook activo:**
+**Flujo completo:**
 ```
 Frontend → agent-orchestrator (Deno) → INSERT meeting_analyses
-                                              ↓ Supabase Webhook
+                                              ↓ Supabase Webhook on-analysis-insert
                                         POST /webhooks/analysis-completed
                                               ↓
                                         ai_jobs (worker polling)
@@ -533,142 +426,57 @@ Frontend → agent-orchestrator (Deno) → INSERT meeting_analyses
                                         meeting_quality_reports
 ```
 
-### Mantenimiento CI/CD — deprecación Node.js 20 en GitHub Actions
-
-✅ **Resuelto sesión 4 (2026-04-12):** actions actualizadas a versiones Node.js 24 en `.github/workflows/deploy-ai-service.yml`:
-
-```yaml
-actions/checkout@v4              → actions/checkout@v6
-google-github-actions/auth@v2    → google-github-actions/auth@v3
-google-github-actions/setup-gcloud@v2 → google-github-actions/setup-gcloud@v3
-```
-
 ---
 
-## Plan de migración: especialistas Deno → agentes Python reales
+## Plan de migración: especialistas Deno → agentes Python reales (ítem 9)
 
-> **Timing:** Este plan se ejecuta DESPUÉS de completar el roadmap de producto (embeddings, RBAC, streaming, polling, exportación, búsqueda, diarización). El Deno actual sigue funcionando durante toda esa fase.
+Los "especialistas" en `agent-orchestrator` (Deno, ~640 líneas) son **llamadas LLM directas** — no son agentes reales. Cada especialista es una fila en `agent_profiles` con `system_prompt` + `output_schema_json`. Sin herramientas, sin razonamiento multi-paso, sin búsqueda de evidencia.
 
-### Estado actual
+**Objetivo:** migrar a `Agent` real del OpenAI Agents SDK (Python), con herramientas propias por dominio. El coordinador orquesta especialistas como subagentes vía patrón **Agent-as-Tool**.
 
-Los "especialistas" en el `agent-orchestrator` Deno son llamadas LLM directas: cada especialista es una fila en `agent_profiles` con `system_prompt` y `output_schema_json`. El orquestador les pasa texto del transcript y espera un JSON de vuelta. No son agentes reales — no tienen herramientas, no razonan en múltiples pasos, no pueden buscar evidencia ni hacer llamadas externas.
-
-```
-agent-orchestrator (Deno)
-  ├── coordinator (LLM call) ← consolida resultados
-  └── specialist_N (LLM call) ← prompt + transcript chunk → JSON
-```
-
-### Objetivo
-
-Migrar cada especialista a un `Agent` real del OpenAI Agents SDK en Python, con herramientas propias por dominio y capacidad de razonamiento multi-paso. El coordinador pasa a ser un agente que orquesta a los especialistas como subagentes (patrón Agent-as-Tool).
-
-```
-agent-orchestrator (Python, apps/ai-service)
-  └── CoordinatorAgent
-        ├── tool: run_specialist("negocios_resumen")   → NegocionResumenAgent
-        ├── tool: run_specialist("negocios_riesgos")   → NegociosRiesgosAgent
-        ├── tool: run_specialist("negocios_acciones")  → NegociosAccionesAgent
-        └── tool: search_transcript(query)             → segmentos relevantes
-```
-
-### Patrón Agent-as-Tool
-
-Cada especialista Python es un `Agent` con sus propias herramientas de dominio:
-
-```python
-# Ejemplo: especialista de riesgos para sector Negocios
-risks_agent = Agent(
-    name="Analista de Riesgos",
-    instructions="...",
-    tools=[search_transcript, get_speaker_context],
-    output_type=RisksOutput,  # Pydantic schema
-)
-
-# El coordinador lo usa como herramienta
-coordinator = Agent(
-    name="Coordinador",
-    instructions="...",
-    tools=[
-        risks_agent.as_tool(name="analizar_riesgos", description="..."),
-        actions_agent.as_tool(name="analizar_acciones", description="..."),
-        search_transcript,
-    ],
-    output_type=FinalAnalysisOutput,
-)
-```
-
-### Ventajas sobre el modelo Deno actual
-
-| Capacidad | Deno actual | Python con Agents SDK |
-|-----------|-------------|----------------------|
-| Herramientas propias por especialista | ✗ | ✓ |
-| Razonamiento multi-paso | ✗ | ✓ |
-| Búsqueda de evidencia antes de concluir | ✗ | ✓ |
-| Tipado fuerte del output (Pydantic) | parcial (JSON schema) | ✓ |
-| Trazabilidad por agente (traces) | manual (agent_runs) | ✓ nativo |
-| Specialists por dominio sin cambio de código | ✓ (via DB) | ✓ (via DB + registro) |
-
-### Estructura objetivo en apps/ai-service
-
+**Estructura objetivo en `apps/ai-service`:**
 ```
 agents/
-├── auditor/          # ya implementado (Fase 2)
-├── base/             # herramientas compartidas: search_transcript, get_context
+├── auditor/      # ya implementado — referencia para nuevos agentes
+├── base/         # herramientas compartidas: search_transcript, get_context
 └── sectors/
-    ├── negocios/     # CoordinatorAgent + specialists
+    ├── negocios/ # primer sector a migrar (CoordinatorAgent + specialists)
     ├── legal/
-    └── salud/        # cada sector es un módulo independiente
+    └── salud/
 ```
 
-### Estrategia de migración (Strangler Fig continuado)
+**Estrategia (Strangler Fig):**
+1. Implementar sector Negocios en Python → agregar job type `analyze_meeting` al worker
+2. Enrutar solo ese sector al Python service; Deno maneja el resto
+3. Validar calidad de output vs Deno en meetings reales
+4. Migrar sector por sector → retirar orquestador Deno
 
-1. Implementar el primer sector completo en Python (ej: Negocios)
-2. Agregar job type `analyze_meeting` al worker Python
-3. Enrutar solo ese sector al Python; Deno sigue manejando el resto
-4. Validar calidad de output vs Deno en meetings reales
-5. Migrar sector por sector hasta que todos estén en Python
-6. Retirar el orquestador Deno
+El enrutamiento se hace en `agent-orchestrator` Deno: si `sector.key` está en la lista migrada, delegar al Python service via HTTP; si no, usar el pipeline Deno existente.
 
-El enrutamiento sector por sector se hace en `agent-orchestrator` Deno: si `sector.key` está en la lista de sectores migrados, delegar al Python service via HTTP (una vez que esté en Cloud Run); si no, usar el pipeline Deno existente.
+> Ver MEMORY.md → "Plan de migración ítem 9 — detalle técnico" para el código de ejemplo del patrón Agent-as-Tool, tabla de ventajas completa y consideraciones de implementación.
+
+> El `AnalysisAuditor` (`agents/auditor/`) es la referencia de implementación del patrón agente real en este proyecto.
 
 ---
 
-## Deuda técnica — revisión sesión 4 (2026-04-12)
+## Deuda técnica
 
-Revisión completa del código realizada en sesión 4. Hallazgos organizados por severidad. Los marcados ✅ fueron resueltos en esta misma sesión.
-
-### ALTA — resolver antes del lanzamiento público
-
-| ID | Archivo | Problema | Estado |
-|----|---------|----------|--------|
-| A1 | `src/pages/Dashboard.tsx:228` | `dangerouslySetInnerHTML` con snippets de `ts_headline` — XSS potencial si PostgreSQL no escapa HTML correctamente | ✅ resuelto sesión 4 — commit `064647b` |
-| A2 | `supabase/functions/stt-transcribe/index.ts` | Si `generateEmbeddings()` falla, los segmentos se guardan sin embeddings sin ningún log. El chat RAG degrada silenciosamente sin que nadie lo detecte. | ✅ resuelto sesión 4 — commit `064647b` |
-
-**Nota sobre falsos positivos descartados:**
-- *Credenciales hardcodeadas en cliente*: La `anon key` de Supabase es pública por diseño en apps browser. RLS protege los datos. No es un problema real.
-- *CSRF en Edge Functions*: Las funciones validan JWT en cada request. Sin token válido no hay mutaciones. Riesgo real muy bajo.
-- *Rate limiter en memoria*: Ya documentado como brecha conocida en "Brechas conocidas fuera del roadmap".
-
-### MEDIA — deuda técnica real, resolver gradualmente
+### MEDIA — resolver gradualmente
 
 | ID | Archivo | Problema |
 |----|---------|----------|
-| M1 | `src/hooks/useMeetingBundle.ts` | Sin `AbortController` — si el usuario cambia de meeting rápido, dos requests en vuelo pueden producir estado stale. |
-| M2 | `src/features/chat/ChatTab.tsx` | Fetch de streaming sin timeout — si Cloud Run tarda, la UI queda colgada indefinidamente. |
+| M1 | `src/hooks/useMeetingBundle.ts` | Sin `AbortController` — race condition si el usuario cambia de meeting rápido. |
+| M2 | `src/features/chat/ChatTab.tsx` | Fetch de streaming sin timeout — UI queda colgada si Cloud Run tarda. |
 | M3 | `src/contexts/AuthContext.tsx` vs `OrgContext.tsx` | Error handling inconsistente: Auth lanza errores, Org los silencia. Debugging difícil. |
 | M4 | `src/components/AudioRecorder.tsx` | `setInterval` puede quedar activo si el componente se desmonta durante grabación (memory leak). |
-| M5 | `src/pages/MeetingDetail.tsx` | Sin `ErrorBoundary` en los tabs de análisis — si crashea un tab, desaparece todo sin feedback al usuario. |
+| M5 | `src/pages/MeetingDetail.tsx` | Sin `ErrorBoundary` en los tabs de análisis — crash de un tab pierde todo el contexto. |
 
 ### BAJA — mejoras de calidad
 
 | ID | Archivo | Problema |
 |----|---------|----------|
-| B1 | `tsconfig.json` | `strictNullChecks: false`, `noImplicitAny: false` — facilita bugs null/undefined silenciosos. Habilitar en modo estricto gradualmente. |
+| B1 | `tsconfig.json` | `strictNullChecks: false`, `noImplicitAny: false` — habilitar gradualmente. |
 | B2 | Todas las Edge Functions | `console.log()` sin niveles ni contexto estructurado. Noise en logs de producción. |
 | B3 | `agents/auditor/agent.py`, `agent-orchestrator/index.ts` | Nombres de modelo (`gpt-4o`) hardcodeados — sin config central. |
-| B4 | Todas las Edge Functions + Python service | Sin request ID (trace ID) para correlacionar logs entre Deno ↔ Python ↔ DB. |
-
-### Pendientes de sesiones anteriores aún abiertos
-
-Ver sección "Brechas conocidas fuera del roadmap inmediato" para los demás pendientes conocidos (cost_estimate_usd null, flujo de eliminación de datos LGPD, etc.).
+| B4 | Todas las Edge Functions + Python service | Sin request ID (trace ID) para correlacionar logs Deno ↔ Python ↔ DB. |
+| B5 | `apps/ai-service/pyproject.toml` | `openai-agents>=0.0.7` pero versión instalada es `0.11.1` — actualizar constraint al renovar la dependencia. |

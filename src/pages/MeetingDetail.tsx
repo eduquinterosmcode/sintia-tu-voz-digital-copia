@@ -73,6 +73,7 @@ export default function MeetingDetail() {
         }));
     } else {
       toast({ title: "Análisis iniciado", description: "Los agentes están procesando. Puedes seguir navegando." });
+      queryClient.invalidateQueries({ queryKey: ["meeting-bundle", id] });
       analyzeMeeting(id).catch((err) => toast({
         title: "Error en análisis",
         description: err instanceof Error ? err.message : "Intenta de nuevo",
