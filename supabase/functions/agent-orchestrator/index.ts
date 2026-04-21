@@ -481,10 +481,36 @@ interface AnalyzeParams {
   corsHeaders: Record<string, string>;
 }
 
+// Sectors handled by the Python ai-service (real agents via OpenAI Agents SDK).
+// Add sector keys here as each sector is migrated. Deno handles everything else.
+const PYTHON_AGENT_SECTORS = new Set<string>(["business"]);
+
 async function handleAnalyze(p: AnalyzeParams): Promise<Response> {
   const { supabase, meetingId, meeting, user, sector, speakerMap, openaiKey, llmModel, temperature, maxTokens, corsHeaders } = p;
   let totalInputTokens = p.totalInputTokens;
   let totalOutputTokens = p.totalOutputTokens;
+
+  // ── Route to Python ai-service for migrated sectors ─────────────────────
+  if (sector?.key && PYTHON_AGENT_SECTORS.has(sector.key)) {
+    const idempotencyKey = `analyze_meeting:${meetingId}:${Date.now()}`;
+    const { error: jobError } = await supabase.from("ai_jobs").insert({
+      idempotency_key: idempotencyKey,
+      job_type: "analyze_meeting",
+      payload: { meeting_id: meetingId },
+      priority: 2,
+      max_attempts: 2,
+    });
+    if (jobError) {
+      console.error("Failed to enqueue analyze_meeting job:", jobError.message);
+      return new Response(JSON.stringify({ error: "Error al encolar el análisis" }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    console.log(`Meeting ${meetingId} routed to Python agents (sector=${sector.key})`);
+    return new Response(JSON.stringify({ queued: true, sector: sector.key }), {
+      status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 
   const { data: agents } = await supabase
     .from("agent_profiles").select("*")
