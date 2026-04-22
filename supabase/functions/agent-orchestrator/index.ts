@@ -508,6 +508,12 @@ async function handleAnalyze(p: AnalyzeParams): Promise<Response> {
     }
     console.log(`Meeting ${meetingId} routed to Python agents (sector=${sector.key})`);
     await supabase.from("meetings").update({ status: "analyzing" }).eq("id", meetingId);
+    const aiServiceUrl = Deno.env.get("AI_SERVICE_URL");
+    if (aiServiceUrl) {
+      fetch(`${aiServiceUrl}/health`).catch((e) =>
+        console.warn("Cloud Run wake-up ping failed (non-fatal):", e)
+      );
+    }
     return new Response(JSON.stringify({ queued: true, sector: sector.key }), {
       status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
