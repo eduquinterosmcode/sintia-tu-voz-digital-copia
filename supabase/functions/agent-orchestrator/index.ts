@@ -492,7 +492,7 @@ async function handleAnalyze(p: AnalyzeParams): Promise<Response> {
 
   // ── Route to Python ai-service for migrated sectors ─────────────────────
   if (sector?.key && PYTHON_AGENT_SECTORS.has(sector.key)) {
-    const idempotencyKey = `analyze_meeting:${meetingId}:${Date.now()}`;
+    const idempotencyKey = `analyze_meeting:${meetingId}:${new Date().toISOString().split("T")[0]}`;
     const { error: jobError } = await supabase.from("ai_jobs").insert({
       idempotency_key: idempotencyKey,
       job_type: "analyze_meeting",
@@ -507,6 +507,7 @@ async function handleAnalyze(p: AnalyzeParams): Promise<Response> {
       });
     }
     console.log(`Meeting ${meetingId} routed to Python agents (sector=${sector.key})`);
+    await supabase.from("meetings").update({ status: "analyzing" }).eq("id", meetingId);
     return new Response(JSON.stringify({ queued: true, sector: sector.key }), {
       status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
