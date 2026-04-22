@@ -114,7 +114,7 @@ All Edge Function calls go through `invokeFunction()` which wraps `supabase.func
 
 ## Roadmap de producto (priorizado)
 
-**Estado al 2026-04-21:** ítems 1–7 completos. Cloud Run activo. Webhook Supabase configurado y validado e2e. App lista para beta cerrada. Ítem 9 es prioridad máxima.
+**Estado al 2026-04-22:** ítems 1–7 completos. Cloud Run activo. App lista para beta cerrada. Ítem 9 en curso — sector Negocios migrado a Python y validado e2e. Próximo: 5 sectores nuevos.
 
 | # | Feature | Estado | Razonamiento |
 |---|---------|--------|--------------|
@@ -126,7 +126,7 @@ All Edge Function calls go through `invokeFunction()` which wraps `supabase.func
 | 6 | **Búsqueda entre reuniones** | ✅ completo | RPC `search_meetings` + `plainto_tsquery` + `ts_headline` snippets (XSS-safe). |
 | 7 | **Whisper chunking >25 min** | ✅ completo | `stt-transcribe` detecta >25 MB → encola job. Python worker: ffmpeg chunks → whisper-1 → merge → embeddings. |
 | 8 | **Diarización automática de speakers** | pendiente | Postergada hasta feedback beta. Decisión técnica pendiente: pyannote.audio vs Deepgram ($0.26/h) vs AssemblyAI ($0.37/h). |
-| 9 | **Migración especialistas Deno → agentes Python reales** | pendiente | **Prioridad máxima.** Especialistas actuales son LLM calls directas. Objetivo: Agent-as-Tool pattern con OpenAI Agents SDK. |
+| 9 | **Migración especialistas Deno → agentes Python reales** | **en curso** | Sector Negocios migrado y validado e2e (sesión 7). Infraestructura `agents/meeting/` completa. Próximo: crear 5 sectores nuevos en DB + código. |
 | 10 | **Tests de integración** | pendiente | Después de ítem 9. Mínimo: un test por Edge Function crítica + job queue e2e. |
 
 ### Brechas conocidas fuera del roadmap inmediato
@@ -276,6 +276,7 @@ Agregar el import en `handlers/__init__.py` para que se registre al startup.
 **Handlers registrados actualmente:**
 | Job type | Archivo | Trigger |
 |----------|---------|---------|
+| `analyze_meeting` | `agents/meeting/handler.py` | `agent-orchestrator` Deno cuando sector está en `PYTHON_AGENT_SECTORS` |
 | `audit_analysis` | `agents/auditor/handler.py` | Supabase Webhook `on-analysis-insert` (INSERT meeting_analyses) |
 | `transcribe_audio` | `handlers/transcribe.py` | `stt-transcribe` Deno cuando audio >25 MB |
 
@@ -289,6 +290,8 @@ Agregar el import en `handlers/__init__.py` para que se registre al startup.
 - **Supabase Storage download (Python)**: usar `GET /storage/v1/object/{storage_path}` con headers `Authorization: Bearer {service_role_key}` + `apikey: {service_role_key}`. El endpoint `/object/authenticated/` es solo para user JWT, no service role. Ambos headers son necesarios (igual que hace supabase-js internamente).
 - **Cloud Run CPU throttling**: sin `--no-cpu-throttling` en el deploy, Cloud Run **suspende el proceso completo** cuando no hay requests HTTP activos. El ffmpeg y cualquier work CPU-intensivo queda congelado indefinidamente. El flag es obligatorio para background workers.
 - **`openai-agents` version constraint**: `pyproject.toml` dice `>=0.0.7` pero la versión instalada (en `uv.lock`) es `0.11.1`. Actualizar el constraint si se cambia la dependencia para reflejar la versión mínima real.
+- **`meetings_status_check`**: el constraint original solo permitía 5 estados. `'analyzing'` y `'transcribing'` se usaban en código pero no estaban en el constraint — Deno los swallowaba silenciosamente; el handler Python lanzaba `CheckViolationError`. Migración `20260422000000` lo corrige. Cualquier status nuevo debe agregarse al constraint.
+- **Wake-up ping en encoladores**: todo handler Deno que encola un job Python DEBE hacer `fetch(AI_SERVICE_URL/health)` fire-and-forget después de encolar. Sin esto, Cloud Run duerme indefinidamente con jobs en pending. Ver patrón en `stt-transcribe` y `agent-orchestrator` (Python routing block).
 
 ### Agente crítico independiente — `AnalysisAuditor` (implementado)
 
@@ -445,17 +448,22 @@ agents/
     └── salud/
 ```
 
-**Estrategia (Strangler Fig):**
-1. Implementar sector Negocios en Python → agregar job type `analyze_meeting` al worker
-2. Enrutar solo ese sector al Python service; Deno maneja el resto
-3. Validar calidad de output vs Deno en meetings reales
-4. Migrar sector por sector → retirar orquestador Deno
+**Estado actual (sesión 7):**
+- `agents/meeting/` implementado: `context.py`, `schemas.py`, `tools.py`, `agents.py`, `runner.py`, `repository.py`, `handler.py`
+- `PYTHON_AGENT_SECTORS = new Set(["business"])` en `agent-orchestrator/index.ts`
+- Sector "business" (Negocios) migrado y validado e2e — pipeline completo: frontend → Deno → ai_jobs → Python worker → meeting_analyses → webhook → audit
+- Output format (`CoordinatorOutput`): `summary`, `key_points`, `decisions`, `action_items`, `risks_alerts`, `suggested_responses`, `open_questions`, `confidence_notes`. Todos los campos con `evidence[]` citando transcript.
+- `view_config_json` del sector "business" ya es compatible con `CoordinatorOutput`.
 
-El enrutamiento se hace en `agent-orchestrator` Deno: si `sector.key` está en la lista migrada, delegar al Python service via HTTP; si no, usar el pipeline Deno existente.
+**Próximo paso (sesión 8):** crear los 5 sectores nuevos en DB (INSERT en `sectors` + `agent_profiles`) y agregar sus keys a `PYTHON_AGENT_SECTORS`. Los sectores pendientes: Metalurgia, Ventas, Abogado, Ingeniero Civil en Obras Civiles, Doctor. También migrar "building_admin" (Administración de Edificios).
 
-> Ver MEMORY.md → "Plan de migración ítem 9 — detalle técnico" para el código de ejemplo del patrón Agent-as-Tool, tabla de ventajas completa y consideraciones de implementación.
+**Para agregar un sector nuevo:**
+1. INSERT en `sectors`: `key`, `name`, `view_config_json` (usar el de "business" como base)
+2. INSERT en `agent_profiles`: coordinator + specialists con `system_prompt` experto, `order_index`, `enabled=true`
+3. Agregar `sector.key` a `PYTHON_AGENT_SECTORS` en `agent-orchestrator/index.ts`
+4. `npx supabase functions deploy agent-orchestrator --project-ref bpzcogoixzxlzaaijdcr`
 
-> El `AnalysisAuditor` (`agents/auditor/`) es la referencia de implementación del patrón agente real en este proyecto.
+> El `AnalysisAuditor` (`agents/auditor/`) y el análisis de Negocios (`agents/meeting/`) son las referencias de implementación del patrón agente real en este proyecto.
 
 ---
 
