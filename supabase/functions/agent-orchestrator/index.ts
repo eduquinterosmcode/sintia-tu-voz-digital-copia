@@ -483,7 +483,15 @@ interface AnalyzeParams {
 
 // Sectors handled by the Python ai-service (real agents via OpenAI Agents SDK).
 // Add sector keys here as each sector is migrated. Deno handles everything else.
-const PYTHON_AGENT_SECTORS = new Set<string>(["business"]);
+const PYTHON_AGENT_SECTORS = new Set<string>([
+  "business",
+  "building_admin",
+  "ventas",
+  "legal",
+  "civil",
+  "metalurgia",
+  "salud",
+]);
 
 async function handleAnalyze(p: AnalyzeParams): Promise<Response> {
   const { supabase, meetingId, meeting, user, sector, speakerMap, openaiKey, llmModel, temperature, maxTokens, corsHeaders } = p;
