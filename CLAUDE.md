@@ -114,7 +114,7 @@ All Edge Function calls go through `invokeFunction()` which wraps `supabase.func
 
 ## Roadmap de producto (priorizado)
 
-**Estado al 2026-04-22:** ítems 1–7 completos. Cloud Run activo. App lista para beta cerrada. Ítem 9 en curso — sector Negocios migrado a Python y validado e2e. Próximo: 5 sectores nuevos.
+**Estado al 2026-04-23:** ítems 1–7 y 9 completos. Cloud Run activo. App lista para beta cerrada. Ítem 9 finalizado — 7 sectores en `PYTHON_AGENT_SECTORS`, 37 agent_profiles en DB, todos ruteados al pipeline Python real. Próximo: tests de integración (ítem 10).
 
 | # | Feature | Estado | Razonamiento |
 |---|---------|--------|--------------|
@@ -126,7 +126,7 @@ All Edge Function calls go through `invokeFunction()` which wraps `supabase.func
 | 6 | **Búsqueda entre reuniones** | ✅ completo | RPC `search_meetings` + `plainto_tsquery` + `ts_headline` snippets (XSS-safe). |
 | 7 | **Whisper chunking >25 min** | ✅ completo | `stt-transcribe` detecta >25 MB → encola job. Python worker: ffmpeg chunks → whisper-1 → merge → embeddings. |
 | 8 | **Diarización automática de speakers** | pendiente | Postergada hasta feedback beta. Decisión técnica pendiente: pyannote.audio vs Deepgram ($0.26/h) vs AssemblyAI ($0.37/h). |
-| 9 | **Migración especialistas Deno → agentes Python reales** | **en curso** | Sector Negocios migrado y validado e2e (sesión 7). Infraestructura `agents/meeting/` completa. Próximo: crear 5 sectores nuevos en DB + código. |
+| 9 | **Migración especialistas Deno → agentes Python reales** | ✅ completo | 7 sectores migrados (business, building_admin, ventas, legal, civil, metalurgia, salud). 37 agent_profiles. Pipeline e2e validado en sector "business". |
 | 10 | **Tests de integración** | pendiente | Después de ítem 9. Mínimo: un test por Edge Function crítica + job queue e2e. |
 
 ### Brechas conocidas fuera del roadmap inmediato
@@ -448,14 +448,16 @@ agents/
     └── salud/
 ```
 
-**Estado actual (sesión 7):**
+**Estado final (sesión 8) — ítem 9 completo:**
 - `agents/meeting/` implementado: `context.py`, `schemas.py`, `tools.py`, `agents.py`, `runner.py`, `repository.py`, `handler.py`
-- `PYTHON_AGENT_SECTORS = new Set(["business"])` en `agent-orchestrator/index.ts`
-- Sector "business" (Negocios) migrado y validado e2e — pipeline completo: frontend → Deno → ai_jobs → Python worker → meeting_analyses → webhook → audit
+- `PYTHON_AGENT_SECTORS = new Set(["business","building_admin","ventas","legal","civil","metalurgia","salud"])` en `agent-orchestrator/index.ts`
+- Migración `20260422100000_add_remaining_sectors.sql` aplicada: 7 sectores, 37 agent_profiles
+- Sector "business" (Negocios): e2e validado en sesión 7 (análisis v16, quality report score 72)
+- Sectores sesión 8: building_admin, ventas, legal, civil, metalurgia, salud — código + DB completo, e2e pendiente
 - Output format (`CoordinatorOutput`): `summary`, `key_points`, `decisions`, `action_items`, `risks_alerts`, `suggested_responses`, `open_questions`, `confidence_notes`. Todos los campos con `evidence[]` citando transcript.
-- `view_config_json` del sector "business" ya es compatible con `CoordinatorOutput`.
+- `view_config_json` del sector "business" es la plantilla base — todos los sectores nuevos la comparten.
 
-**Próximo paso (sesión 8):** crear los 5 sectores nuevos en DB (INSERT en `sectors` + `agent_profiles`) y agregar sus keys a `PYTHON_AGENT_SECTORS`. Los sectores pendientes: Metalurgia, Ventas, Abogado, Ingeniero Civil en Obras Civiles, Doctor. También migrar "building_admin" (Administración de Edificios).
+**Prompt lengths (referencia):** coordinadores 1189–1530 chars, specialists 825–1034 chars. Los specialists de sectores nuevos son ~40% más cortos que los de "business" — funcionales pero con menor profundidad analítica.
 
 **Para agregar un sector nuevo:**
 1. INSERT en `sectors`: `key`, `name`, `view_config_json` (usar el de "business" como base)
