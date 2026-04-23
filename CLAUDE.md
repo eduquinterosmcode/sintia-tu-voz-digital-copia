@@ -114,7 +114,7 @@ All Edge Function calls go through `invokeFunction()` which wraps `supabase.func
 
 ## Roadmap de producto (priorizado)
 
-**Estado al 2026-04-23:** ítems 1–7 y 9 completos. Cloud Run activo. App lista para beta cerrada. Ítem 9 finalizado — 7 sectores en `PYTHON_AGENT_SECTORS`, 37 agent_profiles en DB, todos ruteados al pipeline Python real. Próximo: tests de integración (ítem 10).
+**Estado al 2026-04-23:** ítems 1–7 y 9 completos. Cloud Run activo. App lista para beta cerrada. Próximos: deploy de frontend a producción (ítem 11) + control de acceso beta (ítem 12) + tests de integración (ítem 10).
 
 | # | Feature | Estado | Razonamiento |
 |---|---------|--------|--------------|
@@ -127,7 +127,9 @@ All Edge Function calls go through `invokeFunction()` which wraps `supabase.func
 | 7 | **Whisper chunking >25 min** | ✅ completo | `stt-transcribe` detecta >25 MB → encola job. Python worker: ffmpeg chunks → whisper-1 → merge → embeddings. |
 | 8 | **Diarización automática de speakers** | pendiente | Postergada hasta feedback beta. Decisión técnica pendiente: pyannote.audio vs Deepgram ($0.26/h) vs AssemblyAI ($0.37/h). |
 | 9 | **Migración especialistas Deno → agentes Python reales** | ✅ completo | 7 sectores migrados (business, building_admin, ventas, legal, civil, metalurgia, salud). 37 agent_profiles. Pipeline e2e validado en sector "business". |
-| 10 | **Tests de integración** | pendiente | Después de ítem 9. Mínimo: un test por Edge Function crítica + job queue e2e. |
+| 10 | **Tests de integración** | pendiente | Mínimo: un test por Edge Function crítica + job queue e2e. |
+| 11 | **Deploy frontend a producción** | pendiente | Vercel (recomendado) o Cloudflare Pages. Requiere configurar env vars, CORS, y redirect URLs en Supabase Auth. |
+| 12 | **Control de acceso beta cerrada** | pendiente | Dos partes: (a) signups deshabilitados + invitación manual, (b) límite 1-2 dispositivos por cuenta via Edge Function + `auth.sessions`. |
 
 ### Brechas conocidas fuera del roadmap inmediato
 - Rate limiter en memoria (no persiste entre instancias) — resolver al escalar
@@ -138,6 +140,84 @@ All Edge Function calls go through `invokeFunction()` which wraps `supabase.func
 - `getMeetingBundle` usa raw `fetch` con URL hardcodeada — único llamado fuera de `apiClient.ts`
 - **Supabase Storage límite 50MB (plan gratuito)** — archivos de reuniones largas lo superan fácilmente. Comprimir audio en el cliente o migrar a plan Pro.
 - **Leaked Password Protection deshabilitado** — requiere plan Pro. Activar en Dashboard → Authentication → Settings → "Prevent use of leaked passwords".
+
+---
+
+## Plan de lanzamiento beta cerrada (ítems 11 y 12)
+
+### Ítem 11 — Deploy frontend a producción
+
+**Recomendación: Vercel** (alternativa: Cloudflare Pages)
+
+Vercel detecta Vite automáticamente, tiene integración GitHub (deploy por push + preview URLs por PR), dominio gratuito `*.vercel.app` hasta tener dominio propio, y CLI para deploys manuales.
+
+**Checklist de deploy:**
+1. `npm run build` — verificar que el build local no tiene errores de TypeScript ni ESLint
+2. Crear proyecto en Vercel y conectar el repositorio GitHub
+3. Configurar env vars en Vercel (Settings → Environment Variables):
+   ```
+   VITE_SUPABASE_URL=<url del proyecto Supabase>
+   VITE_SUPABASE_PUBLISHABLE_KEY=<anon key>
+   VITE_SUPABASE_PROJECT_ID=bpzcogoixzxlzaaijdcr
+   VITE_DEV_TOOLS=false
+   ```
+4. Agregar la URL de producción (`https://<proyecto>.vercel.app`) a Supabase Auth:
+   - Dashboard → Authentication → URL Configuration → Site URL
+   - Dashboard → Authentication → URL Configuration → Redirect URLs (agregar `https://<proyecto>.vercel.app/**`)
+5. Agregar la URL al CORS de Edge Functions:
+   - Supabase Dashboard → Edge Functions → Secrets → `ALLOWED_ORIGINS`
+   - Valor: `https://<proyecto>.vercel.app` (si hay múltiples, separar por coma)
+   - **Redeploy todas las Edge Functions** después de cambiar el secret
+6. Verificar que `lovable-tagger` (plugin en `vite.config.ts`) solo corre en `development` mode — ya está condicional, no requiere cambio
+
+**Gotcha clave:** `getMeetingBundle` en `apiClient.ts` usa raw `fetch` con URL construida desde `VITE_SUPABASE_PROJECT_ID`. Esta es la única llamada fuera de `supabase.functions.invoke()` y depende de que ese env var esté seteado correctamente en producción.
+
+**Alternativa Cloudflare Pages:** misma configuración de env vars, pero CORS no requiere secret adicional si se agrega el dominio directamente al array `ALLOWED_PATTERNS` en `cors.ts`. Mejor rendimiento global pero DX ligeramente menor.
+
+---
+
+### Ítem 12 — Control de acceso beta cerrada
+
+**Dos componentes independientes:**
+
+#### 12a — Signups deshabilitados (invitación manual)
+
+1. Supabase Dashboard → Authentication → Settings → desactivar **"Enable user signups"**
+2. Invitar usuarios manualmente:
+   - Opción A (Dashboard): Authentication → Users → "Invite user" → ingresa email
+   - Opción B (código): `supabase.auth.admin.inviteUserByEmail(email)` desde cualquier entorno con service role key
+3. El usuario recibe email con magic link. Al hacer click, puede setear contraseña.
+4. Si alguien intenta registrarse por su cuenta, Supabase devuelve error — no hay código que cambiar en el frontend (Supabase lo bloquea a nivel Auth).
+
+> Este paso se puede hacer **ahora mismo** desde el Dashboard — sin código, sin deploy.
+
+#### 12b — Límite de dispositivos (1-2 por cuenta)
+
+**Enfoque técnico:** Edge Function `check-session-limit` que inspecciona `auth.sessions` con service role key.
+
+Supabase mantiene una tabla interna `auth.sessions` accesible con service role. La lógica:
+1. Al montar la app (en `AuthContext`), llamar a una Edge Function `enforce-session-limit`
+2. La función cuenta las sesiones activas del usuario en `auth.sessions`
+3. Si hay más de `MAX_SESSIONS` (= 2), invalida las más antiguas llamando a `supabase.auth.admin.signOut(userId, { scope: 'others' })` o eliminando filas de `auth.sessions` directamente
+4. La sesión actual (la del request) no se invalida
+
+**Diseño de la Edge Function:**
+```typescript
+// POST /enforce-session-limit
+// Headers: Authorization: Bearer <user JWT>
+// Consulta auth.sessions y elimina sesiones antiguas si > MAX_SESSIONS
+const MAX_SESSIONS = 2;
+// Usar serviceRoleClient para leer auth.sessions
+// SELECT id, user_id, created_at FROM auth.sessions WHERE user_id = $1 ORDER BY created_at DESC
+// Si COUNT > MAX_SESSIONS, DELETE WHERE id IN (sesiones más antiguas)
+```
+
+**Alternativa más simple para el arranque de beta:** no implementar el límite de dispositivos en código — simplemente monitorear manualmente y revocar sesiones desde el Dashboard (Authentication → Users → seleccionar usuario → Sessions → Revoke). Suficiente para una beta de 10-20 usuarios.
+
+**Orden de implementación sugerido:**
+1. Deshabilitar signups (5 min, cero código) ← hacer primero
+2. Deploy frontend en Vercel (30-60 min)
+3. Implementar límite de dispositivos si hay señales de abuso durante beta
 
 ---
 
