@@ -114,7 +114,7 @@ All Edge Function calls go through `invokeFunction()` which wraps `supabase.func
 
 ## Roadmap de producto (priorizado)
 
-**Estado al 2026-04-23:** ítems 1–7 y 9 completos. Cloud Run activo. App lista para beta cerrada. Próximos: deploy de frontend a producción (ítem 11) + control de acceso beta (ítem 12) + tests de integración (ítem 10).
+**Estado al 2026-05-02:** ítems 1–7, 9 y 11 completos. Frontend desplegado en Vercel. Cloud Run activo. Próximos: control de acceso beta (ítem 12) + verificación con usuarios beta + tests de integración (ítem 10).
 
 | # | Feature | Estado | Razonamiento |
 |---|---------|--------|--------------|
@@ -128,8 +128,9 @@ All Edge Function calls go through `invokeFunction()` which wraps `supabase.func
 | 8 | **Diarización automática de speakers** | pendiente | Postergada hasta feedback beta. Decisión técnica pendiente: pyannote.audio vs Deepgram ($0.26/h) vs AssemblyAI ($0.37/h). |
 | 9 | **Migración especialistas Deno → agentes Python reales** | ✅ completo | 7 sectores migrados (business, building_admin, ventas, legal, civil, metalurgia, salud). 37 agent_profiles. Pipeline e2e validado en sector "business". |
 | 10 | **Tests de integración** | pendiente | Mínimo: un test por Edge Function crítica + job queue e2e. |
-| 11 | **Deploy frontend a producción** | pendiente | Vercel (recomendado) o Cloudflare Pages. Requiere configurar env vars, CORS, y redirect URLs en Supabase Auth. |
+| 11 | **Deploy frontend a producción** | ✅ completo | Vercel. URL: `https://sintia-tu-voz-digital-copia.vercel.app`. CORS + Auth configurados. 6 Edge Functions redesplegadas. |
 | 12 | **Control de acceso beta cerrada** | pendiente | Dos partes: (a) signups deshabilitados + invitación manual, (b) límite 1-2 dispositivos por cuenta via Edge Function + `auth.sessions`. |
+| 13 | **Integración con Zoom/Meet como oyente** | pendiente | Requiere Zoom SDK o servicio como Recall.ai. Evaluación técnica pendiente post-beta. |
 
 ### Brechas conocidas fuera del roadmap inmediato
 - Rate limiter en memoria (no persiste entre instancias) — resolver al escalar
@@ -139,7 +140,12 @@ All Edge Function calls go through `invokeFunction()` which wraps `supabase.func
 - Dashboard usa `useState` en vez de TanStack Query — inconsistencia a resolver
 - `getMeetingBundle` usa raw `fetch` con URL hardcodeada — único llamado fuera de `apiClient.ts`
 - **Supabase Storage límite 50MB (plan gratuito)** — archivos de reuniones largas lo superan fácilmente. Comprimir audio en el cliente o migrar a plan Pro.
-- **Leaked Password Protection deshabilitado** — requiere plan Pro. Activar en Dashboard → Authentication → Settings → "Prevent use of leaked passwords".
+- **Badge de Lovable** — aparece en la app en producción. Cleanup visual pendiente post-beta. Requiere identificar el componente y eliminarlo.
+
+### Pendientes al hacer upgrade a Supabase Pro
+- **Activar "Leaked Password Protection"** — Dashboard → Authentication → Settings → "Prevent use of leaked passwords"
+- **Revisar 13 warnings de SECURITY DEFINER** del Security Advisor — funciones con permisos elevados que podrían reducirse
+- **Configurar backups automáticos** de la base de datos
 
 ---
 
@@ -147,32 +153,24 @@ All Edge Function calls go through `invokeFunction()` which wraps `supabase.func
 
 ### Ítem 11 — Deploy frontend a producción
 
+> **Estado: COMPLETO (2026-05-02)**
+> - URL de producción: `https://sintia-tu-voz-digital-copia.vercel.app`
+> - Repo conectado: `eduquinterosmcode/sintia-tu-voz-digital-copia` (GitHub)
+> - Env vars configuradas en Vercel: `VITE_SUPABASE_PROJECT_ID=bpzcogoixzxlzaaijdcr`, `VITE_SUPABASE_PUBLISHABLE_KEY=<anon key>`, `VITE_DEV_TOOLS=false`
+> - Nota: `VITE_SUPABASE_URL` NO está configurada — no tiene efecto real (URL hardcodeada en `client.ts`)
+> - Supabase Auth → Site URL: `https://sintia-tu-voz-digital-copia.vercel.app`
+> - Supabase Auth → Redirect URLs: `https://sintia-tu-voz-digital-copia.vercel.app/**`
+> - Secret `ALLOWED_ORIGINS`: `https://sintia-tu-voz-digital-copia.vercel.app,http://localhost:8080`
+> - 6 Edge Functions redesplegadas con el nuevo CORS: `agent-orchestrator`, `stt-transcribe`, `get-meeting-bundle`, `get-org-members`, `create-signed-upload-url`, `create-demo-meeting`
+> - Verificación mínima completada por el usuario: login OK, dashboard OK
+
 **Recomendación: Vercel** (alternativa: Cloudflare Pages)
 
 Vercel detecta Vite automáticamente, tiene integración GitHub (deploy por push + preview URLs por PR), dominio gratuito `*.vercel.app` hasta tener dominio propio, y CLI para deploys manuales.
 
-**Checklist de deploy:**
-1. `npm run build` — verificar que el build local no tiene errores de TypeScript ni ESLint
-2. Crear proyecto en Vercel y conectar el repositorio GitHub
-3. Configurar env vars en Vercel (Settings → Environment Variables):
-   ```
-   VITE_SUPABASE_URL=<url del proyecto Supabase>
-   VITE_SUPABASE_PUBLISHABLE_KEY=<anon key>
-   VITE_SUPABASE_PROJECT_ID=bpzcogoixzxlzaaijdcr
-   VITE_DEV_TOOLS=false
-   ```
-4. Agregar la URL de producción (`https://<proyecto>.vercel.app`) a Supabase Auth:
-   - Dashboard → Authentication → URL Configuration → Site URL
-   - Dashboard → Authentication → URL Configuration → Redirect URLs (agregar `https://<proyecto>.vercel.app/**`)
-5. Agregar la URL al CORS de Edge Functions:
-   - Supabase Dashboard → Edge Functions → Secrets → `ALLOWED_ORIGINS`
-   - Valor: `https://<proyecto>.vercel.app` (si hay múltiples, separar por coma)
-   - **Redeploy todas las Edge Functions** después de cambiar el secret
-6. Verificar que `lovable-tagger` (plugin en `vite.config.ts`) solo corre en `development` mode — ya está condicional, no requiere cambio
-
 **Gotcha clave:** `getMeetingBundle` en `apiClient.ts` usa raw `fetch` con URL construida desde `VITE_SUPABASE_PROJECT_ID`. Esta es la única llamada fuera de `supabase.functions.invoke()` y depende de que ese env var esté seteado correctamente en producción.
 
-**Alternativa Cloudflare Pages:** misma configuración de env vars, pero CORS no requiere secret adicional si se agrega el dominio directamente al array `ALLOWED_PATTERNS` en `cors.ts`. Mejor rendimiento global pero DX ligeramente menor.
+**Nota sobre env vars:** `VITE_SUPABASE_URL` no tiene efecto real en la app — la URL de Supabase está hardcodeada en `src/integrations/supabase/client.ts` (auto-generado por Lovable). Solo importan `VITE_SUPABASE_PROJECT_ID` y `VITE_SUPABASE_PUBLISHABLE_KEY` para los dos raw fetch en `apiClient.ts`.
 
 ---
 
@@ -215,8 +213,8 @@ const MAX_SESSIONS = 2;
 **Alternativa más simple para el arranque de beta:** no implementar el límite de dispositivos en código — simplemente monitorear manualmente y revocar sesiones desde el Dashboard (Authentication → Users → seleccionar usuario → Sessions → Revoke). Suficiente para una beta de 10-20 usuarios.
 
 **Orden de implementación sugerido:**
-1. Deshabilitar signups (5 min, cero código) ← hacer primero
-2. Deploy frontend en Vercel (30-60 min)
+1. Deshabilitar signups (5 min, cero código) ← pendiente, el usuario lo hace desde Dashboard
+2. ~~Deploy frontend en Vercel~~ ← ✅ completo (ítem 11)
 3. Implementar límite de dispositivos si hay señales de abuso durante beta
 
 ---
